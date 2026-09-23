@@ -55,6 +55,12 @@ class Recording(Base):
     # Cached corruption state set at finalize/repair time so list endpoints
     # don't shell out to ffprobe per row. NULL = not yet determined.
     is_corrupt = Column(Boolean, nullable=True)
+    # Post-recording AV1 compression (see core/compression_service.py):
+    # NULL (never queued), pending, processing, done, skipped, failed.
+    compress_status = Column(String(20), nullable=True)
+    compress_error = Column(Text, nullable=True)
+    # Size of the original H.264 file, set once the compressed file replaces it.
+    original_size = Column(BigInteger, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="recordings")

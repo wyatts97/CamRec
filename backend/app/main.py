@@ -18,6 +18,7 @@ from app.core.media_utils import (
     recording_path,
 )
 from app.core.auth import require_auth
+from app.core.compression_service import compression_service
 from app.api.routes import (
     auth as auth_routes,
     users,
@@ -109,6 +110,7 @@ def _recover_orphaned_recording(recording_id: int, filename: str) -> None:
                 db.commit()
         run_background(generate_thumbnail, video_path, thumbnail_path(video_path), recording_id)
         run_background(generate_sprite, video_path)
+        compression_service.enqueue(recording_id)
         logger.info("Orphan recording %d recovered successfully", recording_id)
     else:
         with get_session() as db:
@@ -130,6 +132,7 @@ async def lifespan(app: FastAPI):
     logging.getLogger().setLevel(logging.INFO)
     _quiet_noisy_loggers()
     monitor_service.start()
+    compression_service.start()
 
     # Reconcile orphaned recordings from previous container restarts.
     # Rows stuck in 'recording'/'processing' with no running task are either
@@ -160,6 +163,7 @@ async def lifespan(app: FastAPI):
     yield
     monitor_service.stop()
     task_manager.shutdown()
+    compression_service.shutdown()
 
 
 app = FastAPI(

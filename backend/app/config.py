@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     DEFAULT_PROXY: str | None = None
     # "best" or a max vertical resolution such as "720".
     DEFAULT_PREFERRED_QUALITY: str = "best"
+    # Re-encode finished recordings to AV1 (see core/compression_service.py).
+    DEFAULT_COMPRESSION_ENABLED: bool = True
 
     # Safety-net for automatic recordings: hard cap so a false "still live"
     # signal from the recorder library can't record forever.

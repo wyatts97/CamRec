@@ -11,6 +11,7 @@ from app.schemas.settings import (
     DiscordConfig,
     TelegramBotConfig,
     AutoCleanupConfig,
+    CompressionConfig,
     SettingsResponse,
     SettingsUpdate
 )
@@ -18,6 +19,8 @@ from app.core.site_service import site_service
 from app.core.sites import available_sites
 from app.core.settings_store import settings_store
 from app.core.cleanup_service import cleanup_service
+from app.core import compression_service as compression_module
+from app.core.compression_service import compression_service
 from app.core.task_manager import monitor_service
 from app.core import notification_sinks as sinks_module
 from app.core.notification_sinks import notification_sinks
@@ -112,6 +115,7 @@ def get_settings():
         max_recording_hours=settings_store.get("max_recording_hours", settings.DEFAULT_MAX_RECORDING_HOURS),
         preferred_quality=str(settings_store.get("preferred_quality", settings.DEFAULT_PREFERRED_QUALITY)),
         auto_cleanup=AutoCleanupConfig(**auto_cleanup_data),
+        compression=CompressionConfig(**compression_module.get_config()),
         notification_sinks=_sink_response(),
         available_notification_events=sinks_module.ALL_EVENTS,
         timezone=settings_store.get("timezone", "UTC")
@@ -142,6 +146,9 @@ def update_settings(update: SettingsUpdate):
             "days": update.auto_cleanup.days,
             "action": update.auto_cleanup.action
         })
+
+    if update.compression is not None:
+        settings_store.set("compression", update.compression.model_dump())
 
     if update.notification_sinks is not None:
         current = sinks_module.get_config()
@@ -229,12 +236,29 @@ def health_check():
         "site_reachable": site_reachable,
         "site_blocked": site_blocked,
         "monitor_error": monitor_service.last_error,
+        "compression_available": compression_module.encoder_available(),
         "recordings_dir": str(settings.RECORDINGS_DIR),
         "recordings_dir_exists": settings.RECORDINGS_DIR.exists(),
         "disk_usage": disk_usage,
         "cpu_percent": cpu_percent,
         "ram_percent": ram_percent,
     }
+
+
+@router.get("/compression/status")
+def compression_status():
+    """Queue length and progress of the post-recording AV1 compression worker."""
+    return compression_service.status()
+
+
+@router.post("/compression/run")
+def compress_existing():
+    """Queue every finished recording that has not been compressed yet."""
+    if not compression_module.encoder_available():
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This ffmpeg build has no AV1 (libsvtav1) encoder")
+    if not compression_module.get_config()["enabled"]:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Compression is turned off in Settings")
+    return {"queued": compression_service.enqueue_backlog()}
 
 
 @router.get("/cleanup/stats")

@@ -44,6 +44,7 @@ from app.core.media_utils import (
     SPRITE_VERSION,
 )
 from app.core.settings_store import settings_store
+from app.core.compression_service import compression_service
 
 logger = logging.getLogger("camsuite.recordings")
 
@@ -92,6 +93,7 @@ def _delete_recording_files(recording: Recording) -> list[str]:
         *[("thumbnail", p) for p in all_thumbnail_paths(video_path)],
         ("sprite", video_path.with_name(video_path.stem + "_sprite.jpg")),
         ("sprite VTT", video_path.with_name(video_path.stem + "_sprite.vtt")),
+        ("compression temp file", video_path.with_suffix(".av1.tmp.mp4")),
     ]
 
     for label, path in assets:
@@ -211,6 +213,9 @@ def _build_response(rec: Recording, db: Session | None = None) -> RecordingRespo
         created_at=rec.created_at,
         thumbnail_ready=_is_thumbnail_ready(rec, db),
         sprite_ready=_is_sprite_ready(rec, db),
+        compress_status=rec.compress_status,
+        compress_error=rec.compress_error,
+        original_size=rec.original_size,
         is_favorite=rec.is_favorite or False,
         is_corrupt=is_corrupt,
     )
@@ -958,10 +963,13 @@ def repair_recording(recording_id: int, db: Session = Depends(get_db)):
             recording.status = "stopped" if recording.status == "stopped" else "completed"
             recording.is_corrupt = False
             recording.error_message = "Recording rebuilt from raw capture"
+            recording.compress_status = None
+            recording.original_size = None
             db.commit()
             db.refresh(recording)
             run_background(generate_thumbnail, video_path, thumbnail_path(video_path), recording.id)
             run_background(generate_sprite, video_path)
+            compression_service.enqueue(recording.id)
             return _build_response(recording, db)
 
         raise HTTPException(
@@ -994,12 +1002,15 @@ def repair_recording(recording_id: int, db: Session = Depends(get_db)):
             recording.status = "completed"
         recording.is_corrupt = False
         recording.error_message = "Recording was repaired"
+        recording.compress_status = None
+        recording.original_size = None
         db.commit()
         db.refresh(recording)
 
         # Regenerate visual assets now that the file is healthy
         run_background(generate_thumbnail, video_path, thumbnail_path(video_path), recording.id)
         run_background(generate_sprite, video_path)
+        compression_service.enqueue(recording.id)
 
         return _build_response(recording, db)
 

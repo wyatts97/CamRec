@@ -79,6 +79,20 @@ def storage_stats(db: Session = Depends(get_db)):
     clip_storage = db.query(func.coalesce(func.sum(Clip.file_size), 0)).scalar() or 0
     total_recordings = db.query(func.count(Recording.id)).filter(Recording.status.in_(_FINISHED)).scalar() or 0
     total_clips = db.query(func.count(Clip.id)).scalar() or 0
+    compressed = (
+        db.query(
+            func.count(Recording.id),
+            func.coalesce(func.sum(Recording.original_size - Recording.file_size), 0),
+        )
+        .filter(Recording.compress_status == "done", Recording.original_size.isnot(None))
+        .one()
+    )
+    pending_compression = (
+        db.query(func.count(Recording.id))
+        .filter(Recording.compress_status.in_(("pending", "processing")))
+        .scalar()
+        or 0
+    )
 
     # Backup ZIPs written by auto-cleanup / compress.
     backup_storage = 0
@@ -98,6 +112,9 @@ def storage_stats(db: Session = Depends(get_db)):
         "backup_count": int(backup_count),
         "total_recordings": int(total_recordings),
         "total_clips": int(total_clips),
+        "compressed_recordings": int(compressed[0]),
+        "compression_saved": int(compressed[1]),
+        "pending_compression": int(pending_compression),
         "disk_usage": _disk_usage(),
     }
 

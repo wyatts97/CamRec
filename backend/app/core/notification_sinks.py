@@ -37,6 +37,7 @@ ALL_EVENTS = [
     "mass_live_anomaly",
     "private_show",
     "site_blocked",
+    "recording_compressed",
 ]
 
 # On by default: the ones worth waking a phone for. "recording_stopped" is a

@@ -22,6 +22,7 @@ from app.core.media_utils import (
 )
 from app.core.notification_service import notification_service
 from app.core.site_service import site_service
+from app.core.compression_service import compression_service
 
 
 def _update_recording_status(recording_id: int, status: str, error_message: str | None = None) -> None:
@@ -605,6 +606,8 @@ class RecordingTask:
 
             run_background(generate_thumbnail, output_path, None, self.recording_id)
             run_background(generate_sprite, output_path)
+            # Replace the H.264 capture with a much smaller AV1 encode, in the background.
+            compression_service.enqueue(self.recording_id)
         else:
             # Finalize + repair both failed — keep the .ts/parts so the user can
             # retry via the repair button, and surface a diagnosable failure.

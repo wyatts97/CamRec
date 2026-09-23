@@ -42,6 +42,13 @@ Data lives next to the compose file:
   configurable) into resumable `.partNNN.ts` segments, which are stitched into
   one faststart MP4 named `F4F_<model>_<YYYY.MM.DD_HH-MM-SS>.mp4`. Thumbnails
   and hover-scrub sprites are generated afterwards.
+- **Compression**: after a recording finishes it is re-encoded to AV1
+  (SVT-AV1, Opus audio) in the background and the smaller file replaces the
+  original, after its duration and codec have been verified. Measured on 1080p
+  captures: ~1.4 GB/hour becomes ~0.35 GB/hour at the default "Balanced"
+  quality, with no visible difference. One job runs at a time, at low priority,
+  on all but two CPU cores. Configure in Settings → Compression, which also
+  has a "Compress existing recordings" button for older files.
 - **Clips**: cut from any finished recording, or capture a clip live from the
   Live player while it records.
 - **Notifications**: in-app feed (SSE), plus optional ntfy / Discord /

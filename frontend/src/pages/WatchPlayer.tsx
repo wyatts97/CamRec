@@ -22,6 +22,7 @@ import { formatBytes, formatDuration } from '@/lib/utils'
 import { useDateFormat } from '@/lib/timezone-context'
 import ClipDialog from '@/components/ClipDialog'
 import { ClipCard } from '@/components/ui/clip-card'
+import CompressionBadge from '@/components/CompressionBadge'
 import toast from 'react-hot-toast'
 
 function triggerDownload(url: string) {
@@ -55,6 +56,7 @@ export default function WatchPlayer() {
     refetchInterval: (query: any) => {
       const rec = query.state.data
       if (!rec) return false
+      if (rec.compress_status === 'pending' || rec.compress_status === 'processing') return 15000
       // Bounded: sprite generation can fail or be skipped entirely, in which
       // case this polled forever.
       if (!rec.sprite_ready && query.state.dataUpdateCount <= SPRITE_POLL_MAX_ATTEMPTS) return 5000
@@ -162,7 +164,10 @@ export default function WatchPlayer() {
           <div className="rounded-xl overflow-hidden bg-black border border-border shadow-sm" ref={playerRef}>
             {recording.thumbnail_ready ? (
               <MediaPlayer
-                src={api.recordings.getStreamUrl(recording.id)}
+                // Versioned so the player reloads cleanly (instead of mixing
+                // byte ranges from two files) when the AV1 encode replaces
+                // the original capture.
+                src={`${api.recordings.getStreamUrl(recording.id)}?v=${recording.original_size ?? 0}`}
                 poster={api.recordings.getThumbnailUrl(
                   recording.id,
                   recording.file_size ?? recording.created_at,
@@ -217,6 +222,10 @@ export default function WatchPlayer() {
               <p className="mt-1 font-medium text-foreground">
                 {formatBytes(recording.file_size)}
               </p>
+              {recording.original_size && recording.compress_status === 'done' && (
+                <p className="text-xs text-muted-foreground">was {formatBytes(recording.original_size)}</p>
+              )}
+              <CompressionBadge recording={recording} className="mt-1.5" />
             </div>
             <div className="p-4 rounded-xl bg-card border border-border">
               <div className="flex items-center gap-2 mb-1">

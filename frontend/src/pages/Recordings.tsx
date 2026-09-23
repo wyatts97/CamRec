@@ -28,6 +28,7 @@ import {
 import EmptyState from '@/components/EmptyState'
 import QueryError from '@/components/QueryError'
 import { ListSkeleton } from '@/components/Skeleton'
+import CompressionBadge from '@/components/CompressionBadge'
 import { api, type Recording } from '@/lib/api'
 import { downloadFiles, formatBytes, formatDuration } from '@/lib/utils'
 import { useDateFormat } from '@/lib/timezone-context'
@@ -421,7 +422,8 @@ export default function Recordings() {
                           <span className="text-sm text-foreground">{formatDuration(row.duration_seconds)}</span>
                         </td>
                         <td className="hidden sm:table-cell px-4 py-3">
-                          <span className="text-sm text-foreground">{formatBytes(row.file_size)}</span>
+                          <span className="block text-sm text-foreground">{formatBytes(row.file_size)}</span>
+                          <CompressionBadge recording={row} className="mt-1" />
                         </td>
                         <td className="px-4 py-3">
                           <span className="text-sm text-muted">{fmt(row.started_at || row.created_at)}</span>

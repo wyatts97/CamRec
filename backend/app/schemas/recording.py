@@ -28,6 +28,9 @@ class RecordingResponse(BaseModel):
     sprite_ready: bool = False
     is_favorite: bool = False
     is_corrupt: bool | None = None
+    compress_status: str | None = None
+    compress_error: str | None = None
+    original_size: int | None = None
 
     class Config:
         from_attributes = True

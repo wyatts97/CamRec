@@ -249,6 +249,18 @@ export default function Storage() {
           </StaggerItem>
         </StaggerContainer>
 
+        {storageStats && (storageStats.compressed_recordings > 0 || storageStats.pending_compression > 0) && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-success/30 bg-success/5 px-4 py-3 text-sm">
+            <span className="font-medium text-foreground">
+              AV1 compression saved {formatBytes(storageStats.compression_saved)}
+            </span>
+            <span className="text-muted-foreground">
+              across {storageStats.compressed_recordings} recording{storageStats.compressed_recordings === 1 ? '' : 's'}
+              {storageStats.pending_compression > 0 && ` · ${storageStats.pending_compression} waiting`}
+            </span>
+          </div>
+        )}
+
         {/* Per-user breakdown */}
         <div className="rounded-xl border border-border bg-card overflow-hidden">
           <div className="px-4 py-3 border-b border-border flex items-center justify-between">

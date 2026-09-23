@@ -1,6 +1,6 @@
 import { useState, useEffect, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Save, AlertCircle, CheckCircle2, Trash2, Archive, Globe, Activity, Video, Clock, Palette, ShieldAlert } from 'lucide-react'
+import { Save, AlertCircle, CheckCircle2, Trash2, Archive, Globe, Activity, Video, Clock, Palette, ShieldAlert, Minimize2, Loader2 } from 'lucide-react'
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from '@/components/selia/card'
 import { Button } from '@/components/selia/button'
 import { IconBox } from '@/components/selia/icon-box'
@@ -23,7 +23,7 @@ import {
   TabsList,
   TabsItem,
 } from '@/components/selia/tabs'
-import { api, type AutoCleanupConfig, type PreferredQuality, type Settings } from '@/lib/api'
+import { api, type AutoCleanupConfig, type CompressionConfig, type CompressionQuality, type PreferredQuality, type Settings } from '@/lib/api'
 import toast from 'react-hot-toast'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import AccentPicker from '@/components/AccentPicker'
@@ -35,6 +35,13 @@ const QUALITY_OPTIONS: { value: PreferredQuality; label: string }[] = [
   { value: '720', label: 'Up to 720p' },
   { value: '540', label: 'Up to 540p' },
   { value: '360', label: 'Up to 360p' },
+]
+
+// Measured on 1080p Flirt4Free captures (source H.264 ≈ 1.4 GB per hour).
+const COMPRESSION_OPTIONS: { value: CompressionQuality; label: string; detail: string }[] = [
+  { value: 'high', label: 'High quality', detail: '≈ 0.45 GB/hour · about 65% smaller' },
+  { value: 'balanced', label: 'Balanced', detail: '≈ 0.35 GB/hour · about 75% smaller' },
+  { value: 'small', label: 'Smallest', detail: '≈ 0.23 GB/hour · about 83% smaller' },
 ]
 
 const RETENTION_OPTIONS = [1, 3, 7, 14, 30].map((d) => ({ value: String(d), label: d === 1 ? '1 day' : `${d} days` }))
@@ -150,6 +157,22 @@ export default function SettingsPage() {
     }
   }, [settings])
 
+  const { data: compression } = useQuery({
+    queryKey: ['compressionStatus'],
+    queryFn: () => api.settings.compressionStatus(),
+    refetchInterval: (q) => (q.state.data?.current || q.state.data?.queue_length ? 3000 : 30000),
+  })
+
+  const compressExistingMutation = useMutation({
+    mutationFn: () => api.settings.compressExisting(),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['compressionStatus'] })
+      queryClient.invalidateQueries({ queryKey: ['recordings'] })
+      toast.success(res.queued ? `Queued ${res.queued} recording(s) for compression` : 'Everything is already compressed')
+    },
+    onError: (error: Error) => toast.error(error.message),
+  })
+
   const updateSettingsMutation = useMutation({
     mutationFn: (data: Partial<Settings>) => api.settings.update(data),
     onSuccess: () => {
@@ -184,6 +207,13 @@ export default function SettingsPage() {
   }
   const setCleanup = (patch: Partial<AutoCleanupConfig>) =>
     setFormData({ ...formData, auto_cleanup: { ...cleanup, ...patch } })
+
+  const compressionCfg: CompressionConfig = {
+    enabled: formData.compression?.enabled ?? true,
+    quality: formData.compression?.quality ?? 'balanced',
+  }
+  const setCompression = (patch: Partial<CompressionConfig>) =>
+    setFormData({ ...formData, compression: { ...compressionCfg, ...patch } })
 
   // Host CPU and RAM, shown under the status rows.
   const resourceMeters =
@@ -319,6 +349,100 @@ export default function SettingsPage() {
               Only public (free chat) shows are recorded. When a model goes private the
               recording pauses and resumes if the show returns to public.
             </p>
+          </CardBody>
+        </Card>
+      ),
+    },
+    {
+      id: 'compression',
+      label: 'Compression',
+      icon: Minimize2,
+      render: () => (
+        <Card id="settings-compression">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Minimize2 className="h-5 w-5" />
+              Compression
+            </CardTitle>
+            <CardDescription>
+              Re-encode finished recordings to AV1. The smaller file replaces the original once it has been verified.
+            </CardDescription>
+          </CardHeader>
+          <CardBody className="space-y-4">
+            {compression && !compression.available && (
+              <div className="flex items-start gap-2 p-3 rounded-lg bg-warning/10 text-sm text-warning">
+                <ShieldAlert className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>This server's ffmpeg has no AV1 encoder (libsvtav1), so compression can't run.</span>
+              </div>
+            )}
+            <div className="flex items-center justify-between">
+              <div>
+                <Label>Compress recordings</Label>
+                <p className="text-xs text-muted-foreground">Runs in the background, one recording at a time</p>
+              </div>
+              <Switch
+                checked={compressionCfg.enabled}
+                onCheckedChange={() => setCompression({ enabled: !compressionCfg.enabled })}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label>Quality</Label>
+              <Select
+                value={compressionCfg.quality}
+                onValueChange={(v) => setCompression({ quality: v as CompressionQuality })}
+              >
+                <SelectTrigger>
+                  <SelectValue format={(v) => COMPRESSION_OPTIONS.find((o) => o.value === v)?.label ?? v} />
+                </SelectTrigger>
+                <SelectPopup>
+                  <SelectList>
+                    {COMPRESSION_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>
+                        <span className="flex flex-col">
+                          <span>{o.label}</span>
+                          <span className="text-xs text-muted-foreground">{o.detail}</span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectList>
+                </SelectPopup>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {COMPRESSION_OPTIONS.find((o) => o.value === compressionCfg.quality)?.detail}. All three
+                look essentially identical to the original at normal viewing.
+              </p>
+            </div>
+            <div className="p-3 rounded-lg bg-secondary text-sm space-y-2">
+              {compression?.current ? (
+                <>
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none text-primary-ink" />
+                    <span className="truncate">Compressing {compression.current.filename}</span>
+                  </div>
+                  <Progress value={Math.round(compression.current.progress * 100)}>
+                    <ProgressValue>{() => `${Math.round((compression.current?.progress ?? 0) * 100)}%`}</ProgressValue>
+                  </Progress>
+                </>
+              ) : (
+                <span className="text-muted-foreground">Idle</span>
+              )}
+              {!!compression?.queue_length && (
+                <p className="text-xs text-muted-foreground">{compression.queue_length} more waiting</p>
+              )}
+              {compression && (
+                <p className="text-xs text-muted-foreground">Uses up to {compression.threads} CPU cores at low priority</p>
+              )}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => compressExistingMutation.mutate()}
+              disabled={compressExistingMutation.isPending || !settings?.compression?.enabled || compression?.available === false}
+              title={!settings?.compression?.enabled ? 'Turn compression on and save first' : undefined}
+            >
+              <Minimize2 className="h-4 w-4" />
+              Compress existing recordings
+            </Button>
           </CardBody>
         </Card>
       ),

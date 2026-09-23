@@ -111,6 +111,26 @@ export interface Recording {
   sprite_ready: boolean
   is_favorite: boolean
   is_corrupt?: boolean
+  /** Post-recording AV1 compression: null (never queued), pending, processing, done, skipped, failed. */
+  compress_status: CompressStatus | null
+  compress_error: string | null
+  /** Size of the original capture, once the compressed file replaced it. */
+  original_size: number | null
+}
+
+export type CompressStatus = "pending" | "processing" | "done" | "skipped" | "failed"
+export type CompressionQuality = "high" | "balanced" | "small"
+
+export interface CompressionConfig {
+  enabled: boolean
+  quality: CompressionQuality
+}
+
+export interface CompressionStatus extends CompressionConfig {
+  available: boolean
+  threads: number
+  queue_length: number
+  current: { recording_id: number; filename: string; progress: number; started_at: string } | null
 }
 
 export interface RecordingListResponse {
@@ -169,6 +189,7 @@ export interface Settings {
   automatic_interval: number
   max_recording_hours: number
   preferred_quality: PreferredQuality
+  compression: CompressionConfig
   auto_cleanup: AutoCleanupConfig
   timezone: string
 }
@@ -192,6 +213,7 @@ export interface HealthStatus {
   site_reachable: boolean
   site_blocked: boolean
   monitor_error: string | null
+  compression_available: boolean
   recordings_dir: string
   recordings_dir_exists: boolean
   disk_usage: DiskUsage | null
@@ -243,6 +265,10 @@ export interface StorageStats {
   backup_count: number
   total_recordings: number
   total_clips: number
+  compressed_recordings: number
+  /** Bytes saved by replacing captures with AV1 encodes. */
+  compression_saved: number
+  pending_compression: number
   disk_usage: DiskUsage | null
 }
 
@@ -499,6 +525,12 @@ export const api = {
 
     triggerMonitorCheck: () =>
       fetchApi<{ triggered: boolean }>("/settings/monitor-check", { method: "POST" }),
+
+    compressionStatus: () => fetchApi<CompressionStatus>("/settings/compression/status"),
+
+    /** Queue every finished recording that hasn't been compressed yet. */
+    compressExisting: () =>
+      fetchApi<{ queued: number }>("/settings/compression/run", { method: "POST" }),
   },
 
   stats: {

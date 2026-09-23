@@ -29,6 +29,11 @@ class NotificationSinksConfig(BaseModel):
     telegram: TelegramBotConfig = TelegramBotConfig()
 
 
+class CompressionConfig(BaseModel):
+    enabled: bool = True
+    quality: str = Field(default="balanced", pattern="^(high|balanced|small)$")
+
+
 class AutoCleanupConfig(BaseModel):
     enabled: bool = False
     days: int = 7  # 1, 3, 7, 14, 30
@@ -42,6 +47,7 @@ class SettingsResponse(BaseModel):
     max_recording_hours: int = 8
     preferred_quality: str = "best"
     auto_cleanup: AutoCleanupConfig = AutoCleanupConfig()
+    compression: CompressionConfig = CompressionConfig()
     notification_sinks: NotificationSinksConfig = NotificationSinksConfig()
     available_notification_events: list[str] = []
     timezone: str = "UTC"
@@ -53,5 +59,6 @@ class SettingsUpdate(BaseModel):
     max_recording_hours: int | None = None
     preferred_quality: str | None = Field(default=None, pattern="^(best|1080|720|540|480|360)$")
     auto_cleanup: AutoCleanupConfig | None = None
+    compression: CompressionConfig | None = None
     notification_sinks: NotificationSinksConfig | None = None
     timezone: str | None = None
