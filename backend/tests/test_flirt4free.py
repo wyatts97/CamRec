@@ -20,6 +20,15 @@ window.__homePageData__ = {
 };
 """
 
+GUYS_LIST = """
+window.__homePageData__ = {
+    'models': [
+        {"room_status_char":"O","room_status":"In Open","model_id":"777","display":"Guy Next Door","model_seo_name":"guy-next-door","sample_long_id":"001/2/3/4","service":"guys"},
+    ],
+    'favorites': [],
+};
+"""
+
 MASTER = """#EXTM3U
 #EXT-X-VERSION:3
 #EXT-X-STREAM-INF:BANDWIDTH=788000,CODECS="avc1.64001e,mp4a.40.2",RESOLUTION=640x360
@@ -94,8 +103,12 @@ def adapter(monkeypatch):
     status_calls = []
 
     def fake_get(url, *, params=None, headers=None, timeout=20, _retry=True):
-        if url == f4f.ONLINE_LIST_URL:
+        if url == f4f.ONLINE_LIST_URLS[0]:
             return FakeResp(ONLINE_LIST)
+        if url == f4f.ONLINE_LIST_URLS[1]:
+            if a.guys_list_down:
+                raise f4f.SiteError("HTTP 500")
+            return FakeResp(GUYS_LIST)
         if url == MASTER_URL:
             return FakeResp(MASTER, ctype="application/vnd.apple.mpegurl")
         raise AssertionError(f"unexpected GET {url}")
@@ -119,6 +132,7 @@ def adapter(monkeypatch):
     monkeypatch.setattr(a, "_get_json", fake_json)
     monkeypatch.setattr(f4f.time, "sleep", lambda s: None)
     a.status_calls = status_calls
+    a.guys_list_down = False
     return a
 
 
@@ -151,6 +165,43 @@ def test_bulk_status_uses_one_list_fetch(adapter):
     assert out["sleepy"].state == "offline"
     # Only the model missing from the list costs a per-model request.
     assert adapter.status_calls == ["sleepy"]
+
+
+def test_mens_list_is_merged(adapter):
+    st = adapter.check_status("guy-next-door")
+    assert st.is_public and st.model_id == "777"
+    assert adapter.status_calls == []
+
+
+def test_offline_models_are_not_rechecked_every_cycle(adapter, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(f4f.time, "monotonic", lambda: clock[0])
+
+    adapter.bulk_status(["rita-grace", "sleepy"])
+    assert adapter.status_calls == ["sleepy"]  # first sighting: safety-net check
+
+    clock[0] += 120  # next monitor cycle
+    out = adapter.bulk_status(["rita-grace", "sleepy"])
+    assert out["sleepy"].state == "offline"
+    assert adapter.status_calls == ["sleepy"]  # lists alone were enough
+
+    clock[0] += f4f._OFFLINE_RECHECK_SECONDS
+    adapter.bulk_status(["rita-grace", "sleepy"])
+    assert adapter.status_calls == ["sleepy", "sleepy"]  # periodic safety net
+
+
+def test_failing_list_falls_back_to_per_model_checks(adapter, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(f4f.time, "monotonic", lambda: clock[0])
+    adapter.guys_list_down = True
+
+    adapter.bulk_status(["sleepy"])
+    clock[0] += 120
+    out = adapter.bulk_status(["rita-grace", "sleepy"])
+    # The women's list still worked...
+    assert out["rita-grace"].is_public
+    # ...but with an incomplete picture, missing models are checked every cycle.
+    assert adapter.status_calls == ["sleepy", "sleepy"]
 
 
 def test_get_stream_url_picks_variant(adapter):

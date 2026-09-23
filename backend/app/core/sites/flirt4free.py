@@ -37,6 +37,10 @@ logger = logging.getLogger("camsuite.sites.flirt4free")
 BASE = "https://www.flirt4free.com"
 STATUS_URL = "https://ws.vs3.com/rooms/check-model-status.php"
 ONLINE_LIST_URL = f"{BASE}/?tpl=index2&model=json"
+# The default list covers women + trans; men are only in their own list.
+# Together they cover every online room (checked against the homepage's
+# "N models online" count).
+ONLINE_LIST_URLS = (ONLINE_LIST_URL, f"{ONLINE_LIST_URL}&service=guys")
 LOGIN_ROOM_URL = f"{BASE}/ws/rooms/chat-room-interface.php"
 STREAM_URLS_URL = f"{BASE}/ws/chat/get-stream-urls.php"
 SCREENCAP_URL = "https://live-screencaps.vscdns.com/{model_id}-desktop.jpg"
@@ -48,9 +52,14 @@ USER_AGENT = (
 )
 USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9\-]{0,63}$")
 
-# The online list is one ~300 KB request covering every open room; reusing it
-# for this long lets one monitor cycle check the whole watchlist with it.
+# The online lists are two requests covering every open room; reusing them
+# for this long lets one monitor cycle check the whole watchlist with them.
 _ONLINE_LIST_TTL = 45
+
+# A model missing from complete online lists is offline. The per-model status
+# endpoint is only a safety net for that, run at most this often per model,
+# which keeps traffic to ~2 requests per cycle regardless of watchlist size.
+_OFFLINE_RECHECK_SECONDS = 30 * 60
 
 # Node shim that runs an anti-bot challenge script with a fake DOM and prints
 # the cookies it sets. Only used if the site ever serves its
@@ -149,7 +158,10 @@ class Flirt4FreeAdapter(SiteAdapter):
         super().__init__(proxy)
         self._local = threading.local()
         self._list_lock = threading.Lock()
-        self._list_cache: tuple[float, dict[str, dict]] | None = None
+        # (fetched_at, {seo_name: entry}, every list fetched OK)
+        self._list_cache: tuple[float, dict[str, dict], bool] | None = None
+        # seo_name -> monotonic time of the last per-model safety-net check.
+        self._offline_checked_at: dict[str, float] = {}
         # Cookies earned by solving a challenge, shared by every thread's session.
         self._challenge_cookies: dict[str, str] = {}
         self.last_blocked_at: float | None = None
@@ -242,18 +254,43 @@ class Flirt4FreeAdapter(SiteAdapter):
             raise ValueError("Enter a Flirt4Free model name or profile URL")
         return name
 
-    def online_models(self, force: bool = False) -> dict[str, dict]:
-        """``{seo_name: entry}`` for every model currently online."""
+    def _fetch_online_lists(self) -> tuple[dict[str, dict], bool]:
+        """Merge every category list. Returns ``(by_name, complete)``.
+
+        Raises only if *no* list could be fetched; a partial result is
+        returned with ``complete=False`` so callers fall back to per-model
+        checks for anyone missing.
+        """
+        by_name: dict[str, dict] = {}
+        failures: list[SiteError] = []
+        for url in ONLINE_LIST_URLS:
+            try:
+                resp = self._get(url, headers={"X-Requested-With": "XMLHttpRequest"}, timeout=30)
+                for m in parse_online_list(resp.text):
+                    if m.get("model_seo_name"):
+                        by_name[m["model_seo_name"].lower()] = m
+            except SiteBlockedError:
+                raise
+            except SiteError as exc:
+                logger.warning("Online list %s failed: %s", url.split("?", 1)[-1], exc)
+                failures.append(exc)
+        if len(failures) == len(ONLINE_LIST_URLS):
+            raise failures[0]
+        return by_name, not failures
+
+    def _online_lists(self, force: bool = False) -> tuple[dict[str, dict], bool]:
         with self._list_lock:
             cached = self._list_cache
             if not force and cached and time.monotonic() - cached[0] < _ONLINE_LIST_TTL:
-                return cached[1]
-        resp = self._get(ONLINE_LIST_URL, headers={"X-Requested-With": "XMLHttpRequest"}, timeout=30)
-        models = parse_online_list(resp.text)
-        by_name = {m["model_seo_name"].lower(): m for m in models if m.get("model_seo_name")}
+                return cached[1], cached[2]
+        by_name, complete = self._fetch_online_lists()
         with self._list_lock:
-            self._list_cache = (time.monotonic(), by_name)
-        return by_name
+            self._list_cache = (time.monotonic(), by_name, complete)
+        return by_name, complete
+
+    def online_models(self, force: bool = False) -> dict[str, dict]:
+        """``{seo_name: entry}`` for every model currently online."""
+        return self._online_lists(force)[0]
 
     def _status_from_entry(self, username: str, entry: dict) -> ModelStatus:
         model_id = str(entry.get("model_id") or "") or None
@@ -309,19 +346,27 @@ class Flirt4FreeAdapter(SiteAdapter):
         return self._check_single(username, model_id)
 
     def bulk_status(self, usernames: list[str]) -> dict[str, ModelStatus]:
-        online = self.online_models(force=True)
+        online, complete = self._online_lists(force=True)
+        now = time.monotonic()
         out: dict[str, ModelStatus] = {}
         for name in usernames:
             entry = online.get(name)
             if entry is not None:
+                self._offline_checked_at.pop(name, None)
                 out[name] = self._status_from_entry(name, entry)
                 continue
-            # Not in the list: almost always offline, but the list can miss
-            # categories, so confirm with the cheap per-model endpoint.
+            # Missing from complete lists means offline. Only ask the
+            # per-model endpoint occasionally, as a safety net, or every time
+            # while a list is failing.
+            last = self._offline_checked_at.get(name)
+            if complete and last is not None and now - last < _OFFLINE_RECHECK_SECONDS:
+                out[name] = ModelStatus(username=name, state="offline")
+                continue
             try:
                 out[name] = self._check_single(name)
             except SiteError as exc:
                 out[name] = ModelStatus(username=name, state="offline", error=str(exc))
+            self._offline_checked_at[name] = now
             time.sleep(0.3)
         return out
 
