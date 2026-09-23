@@ -16,7 +16,7 @@ cp .env.example .env        # set APP_PASSWORD
 docker compose up -d --build
 ```
 
-Open http://localhost:3000 and sign in with `APP_PASSWORD` (if unset, a
+Open http://localhost:3078 (or `FRONTEND_PORT`) and sign in with `APP_PASSWORD` (if unset, a
 password is generated and printed once in `docker compose logs backend`).
 
 Data lives next to the compose file:

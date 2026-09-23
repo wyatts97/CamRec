@@ -7,9 +7,10 @@ services:
     restart: unless-stopped
     # Loopback only. The UI's nginx reaches the backend over the Docker
     # network; publishing on all interfaces let internet scanners hit the API
-    # directly and bypass nginx.
+    # directly and bypass nginx. Only the host-side port (left) must be unique
+    # on the machine; the container side stays 8000.
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${BACKEND_PORT:-8078}:8000"
     volumes:
       - ./recordings:/app/recordings
       - ./data:/app/data
@@ -27,7 +28,7 @@ services:
       - APP_PASSWORD=${APP_PASSWORD:-}
       # Origins allowed to call the API from a browser. Must list the URL
       # you actually open the UI on. Never use "*" -- it is rejected.
-      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-["http://localhost:3000"]}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-["http://localhost:3078"]}
       # Set to true once you serve the UI over HTTPS, so the session
       # cookie is only ever sent on encrypted connections.
       - COOKIE_SECURE=${COOKIE_SECURE:-false}
@@ -48,7 +49,8 @@ services:
       dockerfile: Dockerfile
     container_name: camsuite-frontend
     restart: unless-stopped
+    # Host port for the web UI (container side stays 80).
     ports:
-      - "3000:80"
+      - "${FRONTEND_PORT:-3078}:80"
     depends_on:
       - backend
