@@ -65,33 +65,29 @@ async function fetchApi<T>(
   }
 }
 
-export interface ExportJob {
-  id: string
-  status: 'pending' | 'running' | 'ready' | 'failed' | 'cancelled'
-  files_done: number
-  total_files: number
-  bytes_done: number
-  total_bytes: number
-  percent: number
-  error: string | null
-  filename: string
-  created_at: string
-}
-
 export interface AuthStatus {
   authenticated: boolean
   auth_enabled: boolean
 }
 
+/** public = free chat (recordable); private covers private/group/fan shows. */
+export type RoomState = "public" | "private" | "offline" | "not_found"
+
+export interface SiteInfo {
+  name: string
+  label: string
+}
+
 export interface User {
   id: number
+  site: string
   username: string
   display_name: string | null
-  bio: string | null
-  follower_count: number | null
+  model_id: string | null
+  room_state: RoomState | null
   profile_pic_url: string | null
-  room_id: string | null
   is_monitoring: boolean
+  /** True only while the room is in a public show. */
   is_live: boolean
   last_checked: string | null
   created_at: string
@@ -113,9 +109,6 @@ export interface Recording {
   created_at: string
   thumbnail_ready: boolean
   sprite_ready: boolean
-  transcript_status: string | null
-  /** Only populated by the single-recording endpoint; always null in list responses. */
-  transcript_text: string | null
   is_favorite: boolean
   is_corrupt?: boolean
 }
@@ -144,25 +137,6 @@ export interface Clip {
   created_at: string
 }
 
-export interface LiveEvent {
-  id: number
-  recording_id: number
-  offset_seconds: number
-  event_type: "chat" | "gift"
-  user_nickname: string
-  user_unique_id: string | null
-  content: string | null
-  gift_name: string | null
-  gift_diamond_count: number | null
-  gift_repeat_count: number | null
-  created_at: string
-}
-
-export interface LiveEventListResponse {
-  events: LiveEvent[]
-  total: number
-}
-
 export interface ClipListResponse {
   clips: Clip[]
   total: number
@@ -177,10 +151,8 @@ export interface ActiveRecording {
   status: string
   started_at: string | null
   duration_seconds: number | null
-  room_id: string | null
-  chat_connected: boolean
-  /** Why chat is not being captured, when chat_connected is false. */
-  chat_error: string | null
+  site: string
+  model_id: string | null
 }
 
 export interface AutoCleanupConfig {
@@ -189,27 +161,14 @@ export interface AutoCleanupConfig {
   action: "delete" | "compress"
 }
 
+export type PreferredQuality = "best" | "1080" | "720" | "540" | "480" | "360"
+
 export interface Settings {
-  cookies: {
-    /** Masked preview only (e.g. "••••••••1a2b"). Submitting it back unchanged
-     *  keeps the stored value; the full token is never sent to the client. */
-    sessionid_ss: string
-    tt_target_idc: string
-    sessionid_ss_set?: boolean
-  }
-  telegram: {
-    api_id: string
-    /** Masked preview only -- see cookies.sessionid_ss. */
-    api_hash: string
-    chat_id: string
-    api_hash_set?: boolean
-  }
   proxy: string | null
   output_dir: string
-  default_bitrate: string | null
   automatic_interval: number
-  /** Send the session ID to the Euler Stream sign server for chat capture. */
-  chat_authenticated: boolean
+  max_recording_hours: number
+  preferred_quality: PreferredQuality
   auto_cleanup: AutoCleanupConfig
   timezone: string
 }
@@ -221,11 +180,18 @@ export interface DiskUsage {
   percent: number
 }
 
+export interface SiteHealth extends SiteInfo {
+  reachable: boolean
+  blocked: boolean
+  error: string | null
+}
+
 export interface HealthStatus {
   status: string
-  recorder_available: boolean
-  country_blacklisted: boolean
-  cookies_configured: boolean
+  sites: SiteHealth[]
+  site_reachable: boolean
+  site_blocked: boolean
+  monitor_error: string | null
   recordings_dir: string
   recordings_dir_exists: boolean
   disk_usage: DiskUsage | null
@@ -239,33 +205,17 @@ export interface MonitorStatus {
   next_check_in_seconds: number | null
   interval_minutes: number
   check_interval: number
+  last_error: string | null
 }
 
 export interface StatsOverview {
   total_recordings: number
   total_hours: number
-  total_seconds: number
   total_storage: number
   clip_storage: number
   total_clips: number
   total_users: number
   monitored_users: number
-  total_chat_messages: number
-  total_gifts: number
-  total_diamonds: number
-}
-
-export interface RecordingsPerDay {
-  date: string
-  count: number
-  hours: number
-}
-
-export interface TopStreamer {
-  user_id: number
-  username: string
-  count: number
-  hours: number
 }
 
 export interface StorageByUser {
@@ -273,14 +223,6 @@ export interface StorageByUser {
   username: string
   count: number
   bytes: number
-}
-
-export interface GiftChatVolume {
-  recording_id: number
-  username: string
-  chat_count: number
-  gift_count: number
-  diamonds: number
 }
 
 export interface LargestRecording {
@@ -291,13 +233,6 @@ export interface LargestRecording {
   duration_seconds: number | null
   status: string
   created_at: string
-}
-
-export interface DiskUsage {
-  total: number
-  used: number
-  free: number
-  percent: number
 }
 
 export interface StorageStats {
@@ -329,42 +264,23 @@ export interface LiveClipStatus {
   duration_seconds?: number
 }
 
-export interface GlobalSearchResult {
-  query: string
-  transcripts: {
-    recording_id: number
-    username: string
-    match_count: number
-    matches: { offset_seconds: number; snippet: string }[]
-  }[]
-  events: {
-    id: number
-    recording_id: number
-    username: string
-    offset_seconds: number
-    event_type: "chat" | "gift"
-    user_nickname: string
-    content: string | null
-    gift_name: string | null
-  }[]
-  transcript_count: number
-  event_count: number
-}
-
 export const api = {
   users: {
     list: (monitoringOnly = false, watchlistOnly = true) =>
       fetchApi<User[]>(`/users?monitoring_only=${monitoringOnly}&watchlist_only=${watchlistOnly}`),
     
-    create: (username: string, isMonitoring = false) =>
+    /** `username` may be a model name or a profile URL; the backend normalizes it. */
+    create: (username: string, isMonitoring = false, site = "flirt4free") =>
       fetchApi<User>("/users", {
         method: "POST",
-        body: JSON.stringify({ username, is_monitoring: isMonitoring }),
+        body: JSON.stringify({ username, site, is_monitoring: isMonitoring }),
       }),
+
+    sites: () => fetchApi<SiteInfo[]>("/users/sites"),
     
     get: (id: number) => fetchApi<User>(`/users/${id}`),
     
-    update: (id: number, data: { is_monitoring?: boolean; room_id?: string }) =>
+    update: (id: number, data: { is_monitoring?: boolean }) =>
       fetchApi<User>(`/users/${id}`, {
         method: "PATCH",
         body: JSON.stringify(data),
@@ -379,7 +295,7 @@ export const api = {
       fetchApi<void>(`/users/${id}`, { method: "DELETE" }),
     
     checkStatus: (id: number) =>
-      fetchApi<{ username: string; is_live: boolean; room_id: string | null; last_checked: string }>(
+      fetchApi<{ username: string; is_live: boolean; room_state: RoomState | null; model_id: string | null; last_checked: string }>(
         `/users/${id}/status`
       ),
     
@@ -387,6 +303,9 @@ export const api = {
       fetchApi<User>(`/users/${id}/refresh?refresh_profile=${refreshProfile}`, { method: "POST" }),
     
     getAvatarUrl: (id: number) => `${API_BASE}/users/${id}/avatar`,
+    /** Live room snapshot (204 when offline). Pass a changing `bust` to refresh. */
+    getScreencapUrl: (id: number, bust?: string | number) =>
+      `${API_BASE}/users/${id}/screencap${bust ? `?t=${bust}` : ""}`,
   },
 
   recordings: {
@@ -424,12 +343,12 @@ export const api = {
     },
     
     start: (data: {
+      /** Model name or profile URL. */
       username?: string
-      url?: string
-      room_id?: string
+      user_id?: number
+      site?: string
       mode?: string
       duration?: number
-      bitrate?: string
     }) =>
       fetchApi<Recording>("/recordings/start", {
         method: "POST",
@@ -447,7 +366,7 @@ export const api = {
     getActive: () => fetchApi<ActiveRecording[]>("/recordings/active"),
 
     getLiveUrl: (id: number) =>
-      fetchApi<{ live_url: string; type: 'hls' | 'flv' | 'rtmp' }>(`/recordings/${id}/live-url`),
+      fetchApi<{ live_url: string; type: 'hls' }>(`/recordings/${id}/live-url`),
 
     toggleFavorite: (id: number) =>
       fetchApi<Recording>(`/recordings/${id}/favorite`, { method: "POST" }),
@@ -460,13 +379,6 @@ export const api = {
     },
     getSpriteVttUrl: (id: number) => `${API_BASE}/recordings/${id}/thumbnails.vtt`,
 
-    transcribe: (id: number) =>
-      fetchApi<Recording>(`/recordings/${id}/transcribe`, { method: "POST" }),
-
-    searchTranscripts: (q: string) =>
-      fetchApi<{ recording_id: number; username: string; snippet: string }[]>(
-        `/recordings/transcripts/search?q=${encodeURIComponent(q)}`
-      ),
     
     batchDelete: (ids: number[]) =>
       fetchApi<{ deleted: number; errors: string[] }>("/recordings/batch/delete", {
@@ -492,21 +404,6 @@ export const api = {
     liveClipStop: (id: number) =>
       fetchApi<LiveClipStatus>(`/recordings/${id}/live-clip/stop`, { method: "POST" }),
     
-    /**
-     * @param afterId Return only events newer than this id. Lets the chat
-     * panel poll for deltas instead of re-downloading the whole window.
-     */
-    getEvents: (id: number, page = 1, pageSize = 100, eventType?: string, search?: string, afterId?: number) => {
-      const params = new URLSearchParams({
-        page: page.toString(),
-        page_size: pageSize.toString(),
-      })
-      if (eventType) params.set("event_type", eventType)
-      if (search) params.set("search", search)
-      if (afterId !== undefined) params.set("after_id", afterId.toString())
-      return fetchApi<LiveEventListResponse>(`/recordings/${id}/events?${params}`)
-    },
-
     repair: (id: number) =>
       fetchApi<Recording>(`/recordings/${id}/repair`, { method: "POST" }),
 
@@ -605,18 +502,12 @@ export const api = {
   },
 
   stats: {
-    overview: () => fetchApi<StatsOverview>("/stats/overview"),
-    recordingsPerDay: (days = 30) =>
-      fetchApi<RecordingsPerDay[]>(`/stats/recordings-per-day?days=${days}`),
-    topStreamers: (limit = 10) =>
-      fetchApi<TopStreamer[]>(`/stats/top-streamers?limit=${limit}`),
+    overview: () => fetchApi<StatsOverview>("/storage/overview"),
     storageByUser: (limit = 20) =>
-      fetchApi<StorageByUser[]>(`/stats/storage-by-user?limit=${limit}`),
-    giftChatVolume: (limit = 10) =>
-      fetchApi<GiftChatVolume[]>(`/stats/gift-chat-volume?limit=${limit}`),
+      fetchApi<StorageByUser[]>(`/storage/by-user?limit=${limit}`),
     largestRecordings: (limit = 20) =>
-      fetchApi<LargestRecording[]>(`/stats/largest-recordings?limit=${limit}`),
-    storage: () => fetchApi<StorageStats>("/stats/storage"),
+      fetchApi<LargestRecording[]>(`/storage/largest?limit=${limit}`),
+    storage: () => fetchApi<StorageStats>("/storage"),
   },
 
   notifications: {
@@ -627,26 +518,6 @@ export const api = {
     markAllRead: () =>
       fetchApi<{ unread: number }>("/notifications/read", { method: "POST" }),
     streamUrl: () => `${API_BASE}/notifications/stream`,
-  },
-
-  search: {
-    global: (q: string, limit = 50) =>
-      fetchApi<GlobalSearchResult>(
-        `/search?q=${encodeURIComponent(q)}&limit=${limit}`
-      ),
-  },
-
-  exports: {
-    /** Queue a ZIP export. Omit `ids` to export everything of that kind. */
-    create: (kind: 'recordings' | 'clips', ids?: number[]) =>
-      fetchApi<ExportJob>("/exports", {
-        method: "POST",
-        body: JSON.stringify({ kind, ids: ids ?? null }),
-      }),
-    get: (id: string) => fetchApi<ExportJob>(`/exports/${id}`),
-    cancel: (id: string) =>
-      fetchApi<{ cancelled: boolean }>(`/exports/${id}`, { method: "DELETE" }),
-    downloadUrl: (id: string) => `${API_BASE}/exports/${id}/download`,
   },
 
   auth: {

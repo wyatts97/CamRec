@@ -1,15 +1,13 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
-import { Tv, Search, Trash2, Download, X, Package, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Tv, Search, Trash2, Download, X, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/selia/button'
 import { Input } from '@/components/selia/input'
 import { Select, SelectTrigger, SelectValue, SelectPopup, SelectList, SelectItem } from '@/components/selia/select'
 import { Pagination, PaginationList, PaginationItem, PaginationButton } from '@/components/selia/pagination'
 import EmptyState from '@/components/EmptyState'
 import QueryError from '@/components/QueryError'
-import ExportProgress from '@/components/ExportProgress'
-import { useExportJob } from '@/hooks/useExportJob'
 import { VideoGridSkeleton } from '@/components/Skeleton'
 import { StaggerContainer, StaggerItem } from '@/components/motion'
 import { RecordingVideoCard } from '@/components/ui/recording-video-card'
@@ -17,6 +15,7 @@ import { useConfirm } from '@/components/ConfirmDialog'
 import { api, type Recording } from '@/lib/api'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import toast from 'react-hot-toast'
+import { downloadFiles } from '@/lib/utils'
 
 // ~2 minutes at 5s. Thumbnails that aren't ready by then are not coming.
 const THUMBNAIL_POLL_MAX_ATTEMPTS = 24
@@ -86,17 +85,16 @@ export default function Watch() {
     },
   })
 
-  // Selected-items download goes through the same background export job
-  // as Download All, so it gets the same progress bar. It previously used
-  // a blocking blob fetch with no feedback at all.
-  const handleBatchDownload = (ids: number[]) => startExport('recordings', ids)
-
-  const { job: exportJob, start: startExport, cancel: cancelExport, isExporting } =
-    useExportJob()
-
-  // Exports run as a background job with progress; the old blocking
-  // blob download gave no feedback for minutes on a large library.
-  const handleDownloadAll = () => startExport('recordings')
+  // Selected items download as individual files, one after another.
+  const [isDownloading, setIsDownloading] = useState(false)
+  const handleBatchDownload = async (ids: number[]) => {
+    setIsDownloading(true)
+    try {
+      await downloadFiles(ids.map((id) => api.recordings.getDownloadUrl(id)))
+    } finally {
+      setIsDownloading(false)
+    }
+  }
 
   const queryKey = ['recordings', 'watch', page, sortBy, debouncedSearch] as const
 
@@ -223,22 +221,10 @@ export default function Watch() {
             </SelectList>
           </SelectPopup>
         </Select>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleDownloadAll}
-          title="Download all recordings as ZIP"
-          disabled={isExporting}
-        >
-          <Package className="h-3.5 w-3.5 mr-1.5" />
-          Download All
-        </Button>
         <span className="text-xs text-muted-foreground">
           {total} recording{total !== 1 ? 's' : ''}
         </span>
       </div>
-
-      {exportJob && <ExportProgress job={exportJob} onCancel={cancelExport} />}
 
       {selectedIds.size > 0 && (
         <div className="flex items-center gap-3 p-3 rounded-lg bg-secondary border border-border/50">
@@ -250,7 +236,7 @@ export default function Watch() {
             variant="outline"
             size="sm"
             onClick={() => handleBatchDownload(Array.from(selectedIds))}
-            disabled={isExporting}
+            disabled={isDownloading}
           >
             <Download className="h-3.5 w-3.5 mr-1.5" />
             Download Selected

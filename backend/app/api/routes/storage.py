@@ -60,6 +60,7 @@ def overview(db: Session = Depends(get_db)):
         "total_recordings": int(total_recordings),
         "total_hours": round(int(total_seconds) / 3600, 1),
         "total_storage": int(total_storage),
+        "clip_storage": int(db.query(func.coalesce(func.sum(Clip.file_size), 0)).scalar() or 0),
         "total_clips": int(db.query(func.count(Clip.id)).scalar() or 0),
         "total_users": int(watchlist),
         "monitored_users": int(monitored),

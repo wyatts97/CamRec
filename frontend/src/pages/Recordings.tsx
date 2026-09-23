@@ -27,11 +27,9 @@ import {
 } from '@/components/selia/dialog'
 import EmptyState from '@/components/EmptyState'
 import QueryError from '@/components/QueryError'
-import ExportProgress from '@/components/ExportProgress'
-import { useExportJob } from '@/hooks/useExportJob'
 import { ListSkeleton } from '@/components/Skeleton'
 import { api, type Recording } from '@/lib/api'
-import { formatBytes, formatDuration } from '@/lib/utils'
+import { downloadFiles, formatBytes, formatDuration } from '@/lib/utils'
 import { useDateFormat } from '@/lib/timezone-context'
 import { useConfirm } from '@/components/ConfirmDialog'
 import toast from 'react-hot-toast'
@@ -70,8 +68,7 @@ export default function Recordings() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const queryClient = useQueryClient()
-  const { job: exportJob, start: startExport, cancel: cancelExport, isExporting } =
-    useExportJob()
+  const [isDownloading, setIsDownloading] = useState(false)
 
   // Sync state to URL search params
   // Selection is per-page: carrying it across pages meant "Delete" could act
@@ -191,11 +188,15 @@ export default function Recordings() {
     document.body.removeChild(a)
   }
 
-  // Same background export job as the Watch and Clips pages, so this gets
-  // a progress bar instead of a silent multi-minute blob fetch.
-  const handleBatchDownload = () => {
+  // Selected recordings download as individual files, one after another.
+  const handleBatchDownload = async () => {
     if (selectedIds.size === 0) return
-    startExport('recordings', Array.from(selectedIds))
+    setIsDownloading(true)
+    try {
+      await downloadFiles(Array.from(selectedIds).map((id) => api.recordings.getDownloadUrl(id)))
+    } finally {
+      setIsDownloading(false)
+    }
   }
 
   const handleBatchDelete = () => {
@@ -215,7 +216,7 @@ export default function Recordings() {
 
   const handleDeleteRow = async (id: number, username: string) => {
     const ok = await confirm({
-      title: `Delete recording of @${username}?`,
+      title: `Delete recording of ${username}?`,
       description: 'The recording and its file will be permanently deleted. This cannot be undone.',
       confirmLabel: 'Delete',
     })
@@ -228,7 +229,7 @@ export default function Recordings() {
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-foreground tracking-tight">Recordings</h1>
           <p className="text-muted-foreground mt-1">
-            View and manage your TikTok live recordings
+            View and manage your live cam recordings
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -256,13 +257,13 @@ export default function Recordings() {
               <DialogHeader>
                 <DialogTitle>Start New Recording</DialogTitle>
                 <DialogDescription>
-                  Enter a TikTok username to start recording their live stream
+                  Enter a Flirt4Free model name or profile URL. Only public shows can be recorded.
                 </DialogDescription>
               </DialogHeader>
               <DialogBody>
                 <div className="space-y-4">
                   <Input
-                    placeholder="@username or username"
+                    placeholder="model-name or flirt4free.com URL"
                     value={newUsername}
                     onChange={(e) => setNewUsername(e.target.value)}
                   />
@@ -319,11 +320,6 @@ export default function Recordings() {
           </div>
         </CardHeader>
         <CardBody>
-          {exportJob && (
-            <div className="mb-4">
-              <ExportProgress job={exportJob} onCancel={cancelExport} />
-            </div>
-          )}
           {selectedIds.size > 0 && recordings.length > 0 && (
             <div className="flex items-center gap-2 mb-4 p-3 bg-primary-subtle rounded-lg">
               <span className="text-sm font-medium">
@@ -334,14 +330,14 @@ export default function Recordings() {
                 size="sm"
                 variant="outline"
                 onClick={handleBatchDownload}
-                disabled={isExporting}
+                disabled={isDownloading}
               >
-                {isExporting ? (
+                {isDownloading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Download className="h-4 w-4" />
                 )}
-                Download ZIP
+                Download
               </Button>
               <Button
                 size="sm"
@@ -362,7 +358,7 @@ export default function Recordings() {
             <EmptyState
               icon={Video}
               title="No recordings found"
-              description="Start a recording to capture TikTok live streams"
+              description="Start a recording to capture a live cam show"
               actionLabel="Start your first recording"
               onAction={() => setRecordDialogOpen(true)}
             />
@@ -391,7 +387,6 @@ export default function Recordings() {
                       </th>
                       <th scope="col" className="px-4 py-3 text-start text-xs font-medium text-muted uppercase tracking-wide">User</th>
                       <th scope="col" className="px-4 py-3 text-start text-xs font-medium text-muted uppercase tracking-wide">Status</th>
-                      <th scope="col" className="hidden sm:table-cell px-4 py-3 text-start text-xs font-medium text-muted uppercase tracking-wide">Transcript</th>
                       <th scope="col" className="px-4 py-3 text-start text-xs font-medium text-muted uppercase tracking-wide">Duration</th>
                       <th scope="col" className="hidden sm:table-cell px-4 py-3 text-start text-xs font-medium text-muted uppercase tracking-wide">Size</th>
                       <th scope="col" className="px-4 py-3 text-start text-xs font-medium text-muted uppercase tracking-wide">Date</th>
@@ -416,22 +411,11 @@ export default function Recordings() {
                           />
                         </td>
                         <td className="px-4 py-3">
-                          <span className="block text-sm font-semibold text-foreground">@{row.username}</span>
+                          <span className="block text-sm font-semibold text-foreground">{row.username}</span>
                           <span className="block text-xs text-muted truncate max-w-[200px]">{row.filename}</span>
                         </td>
                         <td className="px-4 py-3">
                           <Badge variant={statusVariantMap[row.status] || 'secondary'}>{row.status}</Badge>
-                        </td>
-                        <td className="hidden sm:table-cell px-4 py-3">
-                          {row.transcript_status === 'done' ? (
-                            <Badge variant="success" className="text-xs">Done</Badge>
-                          ) : row.transcript_status === 'processing' ? (
-                            <Badge variant="warning" className="text-xs">Processing</Badge>
-                          ) : row.transcript_status === 'pending' ? (
-                            <Badge variant="secondary" className="text-xs">Pending</Badge>
-                          ) : (
-                            <span className="text-xs text-dimmed">—</span>
-                          )}
                         </td>
                         <td className="px-4 py-3">
                           <span className="text-sm text-foreground">{formatDuration(row.duration_seconds)}</span>

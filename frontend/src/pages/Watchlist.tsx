@@ -53,6 +53,7 @@ import QueryError from '@/components/QueryError'
 import { Checkbox } from 'components/selia/checkbox'
 import WatchlistProfileCard from '@/components/WatchlistProfileCard'
 import { timeAgo } from '@/lib/notifications'
+import { profileUrl, roomStateLabel, siteLabel } from '@/lib/sites'
 
 const PER_PAGE = 20
 
@@ -191,7 +192,7 @@ export default function Watchlist() {
 
   const handleRemoveOne = async (id: number, username: string) => {
     const ok = await confirm({
-      title: `Remove @${username} from the watchlist?`,
+      title: `Remove ${username} from the watchlist?`,
       description: 'They will no longer be monitored for live streams. Existing recordings are kept.',
       confirmLabel: 'Remove',
     })
@@ -306,9 +307,9 @@ export default function Watchlist() {
   const selectedOnPage = pageUsers.filter((u) => selectedIds.has(u.id)).length
   const recordingByUser = new Map(activeRecordings.map((r) => [r.user_id, r]))
 
-  // Export: copy @username list to clipboard
+  // Export: copy the model name list to the clipboard
   const handleExport = useCallback(() => {
-    const list = users.map((u) => `@${u.username}`).join('\n')
+    const list = users.map((u) => u.username).join('\n')
     // Use textarea fallback for insecure contexts (Docker/nginx)
     const textarea = document.createElement('textarea')
     textarea.value = list
@@ -318,14 +319,14 @@ export default function Watchlist() {
     textarea.select()
     try {
       document.execCommand('copy')
-      toast.success('Usernames copied to clipboard')
+      toast.success('Model names copied to clipboard')
     } catch {
       toast.error('Export failed')
     }
     document.body.removeChild(textarea)
   }, [users, toast])
 
-  // Import: parse @username list and add users
+  // Import: parse a list of model names / profile URLs and add them
   const handleImport = useCallback(() => {
     if (!importText.trim()) return
     setImportStatus(null)
@@ -353,7 +354,7 @@ export default function Watchlist() {
       if (failedNames.length === 0) {
         setImportDialogOpen(false)
         setImportStatus(null)
-        toast.success(`Added ${completed} user(s) to your watchlist`)
+        toast.success(`Added ${completed} model(s) to your watchlist`)
       } else {
         // Keep the dialog open and name the failures -- reporting them through
         // a success toast gave the user nothing to act on.
@@ -372,7 +373,7 @@ export default function Watchlist() {
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-foreground tracking-tight">Watchlist</h1>
           <p className="text-muted-foreground mt-1">
-            Manage TikTok users you want to monitor and record
+            Flirt4Free models you want to monitor and record
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -387,13 +388,13 @@ export default function Watchlist() {
               <DialogHeader>
                 <DialogTitle>Import Users</DialogTitle>
                 <DialogDescription>
-                  Paste a list of @usernames, one per line, to add them to your watchlist with monitoring enabled.
+                  Paste model names or profile URLs, one per line, to add them to your watchlist with monitoring enabled.
                 </DialogDescription>
               </DialogHeader>
               <DialogBody>
                 <textarea
                   className="w-full min-h-[160px] rounded-lg border border-input-border bg-background p-3 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-primary-border"
-                  placeholder={`@user1\n@user2\n@user3`}
+                  placeholder={`model-one\nhttps://www.flirt4free.com/?model=model-two`}
                   value={importText}
                   onChange={(e) => { setImportText(e.target.value); setImportStatus(null) }}
                 />
@@ -473,7 +474,7 @@ export default function Watchlist() {
                 <DialogHeader>
                   <DialogTitle>Add User to Watchlist</DialogTitle>
                   <DialogDescription>
-                    Enter a TikTok username to add to your watchlist
+                    Enter a Flirt4Free model name or paste their profile URL
                   </DialogDescription>
                 </DialogHeader>
                 <DialogBody>
@@ -482,7 +483,7 @@ export default function Watchlist() {
                       <Label htmlFor="username">Username</Label>
                       <Input
                         id="username"
-                        placeholder="@username or username"
+                        placeholder="model-name or flirt4free.com URL"
                         value={newUsername}
                         onChange={(e) => setNewUsername(e.target.value)}
                       />
@@ -515,16 +516,16 @@ export default function Watchlist() {
         </div>
       </div>
 
-      <section aria-label="Watchlist creators">
+      <section aria-label="Watchlist models">
         <div className="mb-4">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <h2 className="text-xl font-semibold tracking-tight text-foreground">
-              Creators <span className="text-dimmed font-normal">({filteredUsers.length})</span>
+              Models <span className="text-dimmed font-normal">({filteredUsers.length})</span>
             </h2>
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search users…"
+                placeholder="Search models…"
                 value={searchQuery}
                 onChange={(e) => {
                   setSearchQuery(e.target.value)
@@ -599,7 +600,7 @@ export default function Watchlist() {
             <EmptyState
               icon={Users}
               title={searchQuery ? 'No users match your search' : 'No users in your watchlist'}
-              description={searchQuery ? 'Try a different search term' : 'Add TikTok users to start monitoring their livestreams'}
+              description={searchQuery ? 'Try a different search term' : 'Add Flirt4Free models to start monitoring their shows'}
               actionLabel={searchQuery ? undefined : 'Add your first user'}
               onAction={searchQuery ? undefined : () => setAddDialogOpen(true)}
             />
@@ -688,10 +689,10 @@ export default function Watchlist() {
         <DrawerPopup direction="right" className="overflow-y-auto">
           <DrawerHeader>
             <DrawerTitle>
-              {detailUser ? `@${detailUser.username}` : 'User Details'}
+              {detailUser ? detailUser.display_name || detailUser.username : 'Model Details'}
             </DrawerTitle>
             <DrawerDescription>
-              {detailUser?.display_name || ''}
+              {detailUser ? `${detailUser.username} · ${siteLabel(detailUser.site)}` : ''}
             </DrawerDescription>
           </DrawerHeader>
 
@@ -730,20 +731,16 @@ export default function Watchlist() {
                   {detailUser.display_name && (
                     <p className="font-semibold text-lg">{detailUser.display_name}</p>
                   )}
-                  <p className="text-muted-foreground">@{detailUser.username}</p>
+                  <p className="text-muted-foreground">{detailUser.username}</p>
                 </div>
-
-                {detailUser.bio && (
-                  <p className="text-sm text-center text-muted-foreground">{detailUser.bio}</p>
-                )}
 
                 <div className="flex justify-center gap-4 text-sm">
                   <div className="text-center">
-                    <p className="font-semibold">{detailUser.follower_count?.toLocaleString() || 'N/A'}</p>
-                    <p className="text-muted-foreground text-xs">Followers</p>
+                    <p className="font-semibold">{siteLabel(detailUser.site)}</p>
+                    <p className="text-muted-foreground text-xs">Site</p>
                   </div>
                   <div className="text-center">
-                    <p className="font-semibold">{detailUser.is_live ? 'Live' : 'Offline'}</p>
+                    <p className="font-semibold">{roomStateLabel(detailUser.room_state)}</p>
                     <p className="text-muted-foreground text-xs">Status</p>
                   </div>
                 </div>
@@ -755,11 +752,11 @@ export default function Watchlist() {
                   size="sm"
                   className="flex-1"
                   onClick={() => {
-                    window.open(`https://www.tiktok.com/@${detailUser.username}`, '_blank')
+                    window.open(profileUrl(detailUser.site, detailUser.username), '_blank', 'noopener,noreferrer')
                   }}
                 >
                   <ExternalLink className="h-3 w-3 mr-1" />
-                  TikTok Profile
+                  Open on {siteLabel(detailUser.site)}
                 </Button>
                 {detailUser.is_live && (
                   <Button

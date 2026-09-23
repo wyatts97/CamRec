@@ -63,7 +63,7 @@ export default function Dashboard() {
     onSuccess: (_rec, username) => {
       queryClient.invalidateQueries({ queryKey: ['activeRecordings'] })
       queryClient.invalidateQueries({ queryKey: ['recordings'] })
-      toast.success(`Recording @${username}`)
+      toast.success(`Recording ${username}`)
     },
     onError: (err: Error) => toast.error(err.message),
   })
@@ -84,16 +84,18 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-10">
-      {health?.country_blacklisted && (
+      {(health?.site_blocked || health?.site_reachable === false) && (
         <Card className="ring-warning/40 bg-warning/5">
           <CardBody className="flex items-start gap-3">
             <IconBox variant="warning-subtle" size="sm">
               <AlertCircle />
             </IconBox>
             <div>
-              <p className="font-medium text-foreground">Region restricted</p>
+              <p className="font-medium text-foreground">
+                {health.site_blocked ? 'Cam site is blocking requests' : 'Cam site unreachable'}
+              </p>
               <p className="text-sm text-muted">
-                TikTok access is restricted in your region. Configure cookies or a proxy in{' '}
+                Status checks are failing, so new shows won't be detected. Try a proxy in{' '}
                 <Link to="/settings" className="underline">Settings</Link>.
               </p>
             </div>

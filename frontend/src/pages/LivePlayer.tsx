@@ -1,21 +1,16 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { tabListKeyDown, tabProps, tabPanelProps } from '@/lib/a11y'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, LoaderCircle, Radio, Square, Tv, Calendar, Clock, MessageCircle, Scissors } from 'lucide-react'
+import { ArrowLeft, LoaderCircle, Radio, Square, Tv, Calendar, Clock, Scissors } from 'lucide-react'
 import { Button } from '@/components/selia/button'
 import { IconBox } from '@/components/selia/icon-box'
 import { api } from '@/lib/api'
 import { formatDuration } from '@/lib/utils'
 import { useDateFormat } from '@/lib/timezone-context'
-import ChatPanel from '@/components/ChatPanel'
-import ChatStatusBadge from '@/components/ChatStatusBadge'
 import { useConfirm } from '@/components/ConfirmDialog'
 import FlvPlayer from '@/components/FlvPlayer'
 import ErrorBoundary from '@/components/ErrorBoundary'
 import toast from 'react-hot-toast'
-
-const LIVE_TABS = ['player', 'chat'] as const
 
 export default function LivePlayer() {
   const fmt = useDateFormat()
@@ -24,18 +19,15 @@ export default function LivePlayer() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const recordingId = Number(id)
-  const [chatSearch, setChatSearch] = useState('')
-  const [showChat, setShowChat] = useState(false)
   const [liveUrl, setLiveUrl] = useState<string | null>(null)
-  const [streamType, setStreamType] = useState<'hls' | 'flv' | 'rtmp'>('flv')
+  const [streamType, setStreamType] = useState<'hls'>('hls')
   const [urlError, setUrlError] = useState(false)
   const [playerError, setPlayerError] = useState(false)
   const { data: recording, isLoading } = useQuery({
     queryKey: ['recording', recordingId],
     queryFn: () => api.recordings.get(recordingId),
     enabled: !isNaN(recordingId),
-    // Once the stream ends this row stops changing (and later carries the
-    // full transcript), so stop polling it.
+    // Once the stream ends this row stops changing, so stop polling it.
     refetchInterval: (q: any) => {
       const status = q.state.data?.status
       return status === undefined || status === 'pending' || status === 'recording' ? 5000 : false
@@ -58,16 +50,6 @@ export default function LivePlayer() {
 
   const streamIsActive = recording?.status === 'pending' || recording?.status === 'recording'
 
-  // Chat capture state lives on the active-recordings feed (shared cache with
-  // Layout/Live), not on the recording row.
-  const { data: activeRecordings } = useQuery({
-    queryKey: ['activeRecordings'],
-    queryFn: () => api.recordings.getActive(),
-    enabled: streamIsActive,
-    refetchInterval: 10000,
-  })
-  const activeEntry = activeRecordings?.find((r) => r.id === recordingId)
-
   useEffect(() => {
     // Once the stream has ended there is no URL to get, so continuing to poll
     // only produced a 404 and an error toast every 30 seconds, forever.
@@ -77,8 +59,8 @@ export default function LivePlayer() {
     return () => clearInterval(interval)
   }, [fetchLiveUrl, streamIsActive])
 
-  // When the player reports an error, immediately refresh the URL. TikTok live
-  // URLs expire after ~5 minutes, so a fresh URL often fixes playback.
+  // When the player reports an error, refresh the URL: the stream may have
+  // moved CDN node, or the show paused and came back.
   useEffect(() => {
     if (!playerError) return
     const timeout = setTimeout(() => {
@@ -180,7 +162,7 @@ export default function LivePlayer() {
         </Button>
         <div className="flex-1 min-w-0">
           <h1 className="text-xl font-bold text-foreground tracking-tight truncate">
-            @{recording.username}
+            {recording.username}
           </h1>
           <p className="text-xs text-muted-foreground flex items-center gap-1">
             {isActive && (
@@ -221,14 +203,6 @@ export default function LivePlayer() {
             Stop
           </Button>
         )}
-        <Button
-          variant={showChat ? 'primary' : 'outline'}
-          size="sm"
-          className="hidden lg:inline-flex"
-          onClick={() => setShowChat((s) => !s)}
-        >
-          <MessageCircle className="h-4 w-4" />
-        </Button>
       </div>
 
       {/* Main layout */}
@@ -322,71 +296,11 @@ export default function LivePlayer() {
                 <p className="text-xs text-muted-foreground uppercase tracking-wider">Status</p>
               </div>
               <p className="mt-1 font-medium text-foreground capitalize">{recording.status}</p>
-              {activeEntry && <ChatStatusBadge recording={activeEntry} className="mt-2" />}
             </div>
           </div>
 
-          {/* Mobile chat */}
-          <div className="lg:hidden border border-border rounded-xl overflow-hidden">
-            <div
-              className="flex border-b border-border bg-secondary"
-              role="tablist"
-              aria-label="Player views"
-              onKeyDown={tabListKeyDown(
-                LIVE_TABS,
-                showChat ? 'chat' : 'player',
-                (next) => setShowChat(next === 'chat'),
-              )}
-            >
-              <button
-                onClick={() => setShowChat(false)}
-                {...tabProps('player', !showChat)}
-                className={`px-4 py-2.5 text-sm font-medium transition-colors ${
-                  !showChat
-                    ? 'bg-background text-primary-ink border-b-2 border-primary -mb-px'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                Player
-              </button>
-              <button
-                onClick={() => setShowChat(true)}
-                {...tabProps('chat', showChat)}
-                className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors ${
-                  showChat
-                    ? 'bg-background text-primary-ink border-b-2 border-primary -mb-px'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                <MessageCircle className="h-3.5 w-3.5" />
-                Chat
-              </button>
-            </div>
-            {showChat && (
-              <div {...tabPanelProps('chat')}>
-              <ChatPanel
-                recording={recording}
-                chatSearch={chatSearch}
-                onChatSearchChange={setChatSearch}
-                variant="inline"
-              />
-              </div>
-            )}
-          </div>
         </div>
 
-        {/* Desktop sidebar chat */}
-        {/* No wrapper: the "panel" variant already supplies its own border,
-            width and background -- wrapping it nested two borders and left the
-            two widths fighting. */}
-        {showChat && (
-          <ChatPanel
-            recording={recording}
-            chatSearch={chatSearch}
-            onChatSearchChange={setChatSearch}
-            variant="panel"
-          />
-        )}
       </div>
       {confirmDialog}
     </div>

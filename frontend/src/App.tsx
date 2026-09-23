@@ -18,8 +18,6 @@ const LivePlayer = lazy(() => import('./pages/LivePlayer'))
 const Clips = lazy(() => import('./pages/Clips'))
 const ClipPlayer = lazy(() => import('./pages/ClipPlayer'))
 const Settings = lazy(() => import('./pages/Settings'))
-const Stats = lazy(() => import('./pages/Stats'))
-const Search = lazy(() => import('./pages/Search'))
 const Storage = lazy(() => import('./pages/Storage'))
 const Login = lazy(() => import('./pages/Login'))
 
@@ -95,8 +93,6 @@ function App() {
             <Route path="live/:id" element={<LivePlayer />} />
             <Route path="clips" element={<Clips />} />
             <Route path="clips/:id" element={<ClipPlayer />} />
-            <Route path="stats" element={<Stats />} />
-            <Route path="search" element={<Search />} />
             <Route path="storage" element={<Storage />} />
             <Route path="settings" element={<Settings />} />
             <Route path="*" element={<NotFound />} />

@@ -1,12 +1,11 @@
-import { useState, useRef, useCallback, useMemo, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { tabListKeyDown, tabProps, tabPanelProps } from '@/lib/a11y'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { MediaPlayer, MediaProvider } from '@vidstack/react'
 import { defaultLayoutIcons, DefaultVideoLayout } from '@vidstack/react/player/layouts/default'
 import '@vidstack/react/player/styles/default/theme.css'
 import '@vidstack/react/player/styles/default/layouts/video.css'
-import { ArrowLeft, Download, Trash2, Loader2, FileText, MessageCircle, Calendar, Clock, HardDrive, FileVideo, Scissors, Film } from 'lucide-react'
+import { ArrowLeft, Download, Trash2, Loader2, Calendar, Clock, HardDrive, FileVideo, Scissors, Film } from 'lucide-react'
 import { Button } from '@/components/selia/button'
 import { IconBox } from '@/components/selia/icon-box'
 import {
@@ -21,23 +20,9 @@ import {
 import { api } from '@/lib/api'
 import { formatBytes, formatDuration } from '@/lib/utils'
 import { useDateFormat } from '@/lib/timezone-context'
-import TranscriptPanel from '@/components/TranscriptPanel'
-import ChatPanel from '@/components/ChatPanel'
 import ClipDialog from '@/components/ClipDialog'
 import { ClipCard } from '@/components/ui/clip-card'
 import toast from 'react-hot-toast'
-
-function downloadAsFile(content: string, filename: string, mime: string) {
-  const blob = new Blob([content], { type: mime })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
-}
 
 function triggerDownload(url: string) {
   const a = document.createElement('a')
@@ -48,58 +33,8 @@ function triggerDownload(url: string) {
   document.body.removeChild(a)
 }
 
-// Whisper gives us start times only, so a cue runs until the next one starts
-// (capped, so a long gap doesn't leave one line on screen for minutes).
-const SRT_MAX_CUE_SECONDS = 3
-
-function srtTimestamp(totalSeconds: number): string {
-  const pad = (n: number) => String(n).padStart(2, '0')
-  const hh = Math.floor(totalSeconds / 3600)
-  const mm = Math.floor((totalSeconds % 3600) / 60)
-  const ss = Math.floor(totalSeconds % 60)
-  return `${pad(hh)}:${pad(mm)}:${pad(ss)},000`
-}
-
-function formatTranscriptAsSrt(transcriptText: string): string {
-  const lines = transcriptText.split('\n').filter(Boolean)
-  // Two passes: an entry's end time is the *next* entry's start, so nothing
-  // can be emitted until the whole list is parsed.
-  const parsed: { seconds: number; text: string }[] = []
-  for (const line of lines) {
-    const match = line.match(/\[(\d{2}:\d{2}(?::\d{2})?)\]\s*(.*)/)
-    if (!match) continue
-    const parts = match[1].split(':').map(Number)
-    const seconds =
-      parts.length === 3
-        ? parts[0] * 3600 + parts[1] * 60 + parts[2]
-        : parts[0] * 60 + parts[1]
-    parsed.push({ seconds, text: match[2] })
-  }
-
-  return parsed
-    .map((entry, i) => {
-      const next = parsed[i + 1]
-      let end = entry.seconds + SRT_MAX_CUE_SECONDS
-      // Only clamp when the next cue is strictly later; two lines sharing a
-      // timestamp would otherwise produce a zero-length cue that players drop.
-      if (next && next.seconds > entry.seconds) end = Math.min(end, next.seconds)
-      return `${i + 1}\n${srtTimestamp(entry.seconds)} --> ${srtTimestamp(end)}\n${entry.text}\n`
-    })
-    .join('\n')
-}
-
-function formatTranscriptAsTxt(transcriptText: string): string {
-  return transcriptText
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => line.replace(/\[\d{2}:\d{2}(?::\d{2})?\]\s*/, ''))
-    .join('\n')
-}
-
 // ~2 minutes at 5s.
 const SPRITE_POLL_MAX_ATTEMPTS = 24
-
-const WATCH_TABS = ['player', 'transcript', 'chat'] as const
 
 export default function WatchPlayer() {
   const fmt = useDateFormat()
@@ -108,11 +43,6 @@ export default function WatchPlayer() {
   const [searchParams, setSearchParams] = useSearchParams()
   const recordingId = Number(id)
   const queryClient = useQueryClient()
-  const [activeTab, setActiveTab] = useState<'player' | 'transcript' | 'chat'>('player')
-  const [showTranscript, setShowTranscript] = useState(false)
-  const [showChat, setShowChat] = useState(false)
-  const [transcriptSearch, setTranscriptSearch] = useState('')
-  const [chatSearch, setChatSearch] = useState('')
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [clipDialogOpen, setClipDialogOpen] = useState(false)
   const [clipStartSeconds, setClipStartSeconds] = useState<number | null>(null)
@@ -125,8 +55,6 @@ export default function WatchPlayer() {
     refetchInterval: (query: any) => {
       const rec = query.state.data
       if (!rec) return false
-      // Whisper takes minutes on CPU; a 3s poll mostly re-fetched an unchanged row.
-      if (rec.transcript_status === 'processing' || rec.transcript_status === 'pending') return 10000
       // Bounded: sprite generation can fail or be skipped entirely, in which
       // case this polled forever.
       if (!rec.sprite_ready && query.state.dataUpdateCount <= SPRITE_POLL_MAX_ATTEMPTS) return 5000
@@ -142,11 +70,6 @@ export default function WatchPlayer() {
 
   const recordingClips = clipsData?.clips || []
 
-  const transcribeMutation = useMutation({
-    mutationFn: () => api.recordings.transcribe(recordingId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['recording', recordingId] }),
-  })
-
   const deleteMutation = useMutation({
     mutationFn: () => api.recordings.delete(recordingId),
     onSuccess: () => {
@@ -159,11 +82,6 @@ export default function WatchPlayer() {
     },
   })
 
-  const handleSeek = useCallback((seconds: number) => {
-    const video = playerRef.current?.querySelector('video') as HTMLVideoElement | null
-    if (video) video.currentTime = seconds
-  }, [])
-
   // Capture where the user is in the recording, so the clip dialog can open
   // with Start Time already filled in.
   const openClipDialog = useCallback(() => {
@@ -172,7 +90,7 @@ export default function WatchPlayer() {
     setClipDialogOpen(true)
   }, [])
 
-  // Jump to timestamp from ?t= query parameter (e.g. from search results)
+  // Jump to a timestamp from the ?t= query parameter
   useEffect(() => {
     const t = searchParams.get('t')
     if (!t || !recording) return
@@ -197,46 +115,6 @@ export default function WatchPlayer() {
 
     return () => clearInterval(interval)
   }, [recording, searchParams, setSearchParams])
-
-  const handleDownloadSrt = useCallback(() => {
-    if (!recording?.transcript_text) return
-    const srt = formatTranscriptAsSrt(recording.transcript_text)
-    const baseName = recording.filename?.replace(/\.[^.]+$/, '') || `recording_${recording.id}`
-    downloadAsFile(srt, `${baseName}.srt`, 'text/plain')
-  }, [recording])
-
-  const handleDownloadTxt = useCallback(() => {
-    if (!recording?.transcript_text) return
-    const txt = formatTranscriptAsTxt(recording.transcript_text)
-    const baseName = recording.filename?.replace(/\.[^.]+$/, '') || `recording_${recording.id}`
-    downloadAsFile(txt, `${baseName}.txt`, 'text/plain')
-  }, [recording])
-
-  const transcriptActions = useMemo(() => {
-    if (!recording?.transcript_text || recording.transcript_status !== 'done') return null
-    return (
-      <div className="flex items-center gap-2 mt-2">
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={handleDownloadSrt}
-          className="text-xs"
-        >
-          <Download className="h-3 w-3" />
-          Download SRT
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={handleDownloadTxt}
-          className="text-xs"
-        >
-          <FileText className="h-3 w-3" />
-          Download TXT
-        </Button>
-      </div>
-    )
-  }, [recording, handleDownloadSrt, handleDownloadTxt])
 
   if (isLoading) {
     return (
@@ -265,26 +143,8 @@ export default function WatchPlayer() {
           <ArrowLeft className="h-5 w-5" />
         </Button>
         <h1 className="text-2xl font-bold text-foreground tracking-tight truncate flex-1">
-          @{recording.username}
+          {recording.username}
         </h1>
-        <Button
-          variant={showTranscript ? "primary" : "outline"}
-          size="sm"
-          className="hidden lg:inline-flex"
-          onClick={() => setShowTranscript((s) => !s)}
-        >
-          <FileText className="h-4 w-4" />
-          Transcript
-        </Button>
-        <Button
-          variant={showChat ? "primary" : "outline"}
-          size="sm"
-          className="hidden lg:inline-flex"
-          onClick={() => setShowChat((s) => !s)}
-        >
-          <MessageCircle className="h-4 w-4" />
-          Chat
-        </Button>
       </div>
 
       {!recording.thumbnail_ready && (
@@ -307,7 +167,7 @@ export default function WatchPlayer() {
                   recording.id,
                   recording.file_size ?? recording.created_at,
                 )}
-                title={`@${recording.username}`}
+                title={recording.username}
                 className="w-full aspect-video"
               >
                 <MediaProvider />
@@ -438,108 +298,8 @@ export default function WatchPlayer() {
             )}
           </div>
 
-          {/* Mobile transcript tab */}
-          <div className="border border-border rounded-xl overflow-hidden lg:hidden">
-            <div className="flex border-b border-border bg-secondary"
-              role="tablist"
-              aria-label="Player views"
-              onKeyDown={tabListKeyDown(WATCH_TABS, activeTab, setActiveTab)}
-            >
-              <button
-                onClick={() => setActiveTab('player')}
-                {...tabProps('player', activeTab === 'player')}
-                className={`px-4 py-2.5 text-sm font-medium transition-colors ${
-                  activeTab === 'player'
-                    ? 'bg-background text-primary-ink border-b-2 border-primary -mb-px'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                Player
-              </button>
-              <button
-                onClick={() => setActiveTab('transcript')}
-                {...tabProps('transcript', activeTab === 'transcript')}
-                className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors ${
-                  activeTab === 'transcript'
-                    ? 'bg-background text-primary-ink border-b-2 border-primary -mb-px'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                <FileText className="h-3.5 w-3.5" />
-                Transcript
-                {recording.transcript_status === 'done' && (
-                  <span className="ml-1 h-1.5 w-1.5 rounded-full bg-success" />
-                )}
-              </button>
-              <button
-                onClick={() => setActiveTab('chat')}
-                {...tabProps('chat', activeTab === 'chat')}
-                className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors ${
-                  activeTab === 'chat'
-                    ? 'bg-background text-primary-ink border-b-2 border-primary -mb-px'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                <MessageCircle className="h-3.5 w-3.5" />
-                Chat
-              </button>
-            </div>
-
-            {activeTab === 'transcript' && (
-              <div {...tabPanelProps('transcript')}>
-                <TranscriptPanel
-                  recording={recording}
-                  transcriptSearch={transcriptSearch}
-                  onTranscriptSearchChange={setTranscriptSearch}
-                  onTranscribe={() => transcribeMutation.mutate()}
-                  isTranscribing={transcribeMutation.isPending}
-                  onSeek={handleSeek}
-                  variant="inline"
-                />
-                {transcriptActions}
-              </div>
-            )}
-            {activeTab === 'chat' && (
-              <div {...tabPanelProps('chat')}>
-                <ChatPanel
-                  recording={recording}
-                  chatSearch={chatSearch}
-                  onChatSearchChange={setChatSearch}
-                  onSeek={handleSeek}
-                  variant="inline"
-                />
-              </div>
-            )}
-          </div>
         </div>
 
-        {/* Desktop sidebar panels */}
-        {showTranscript && (
-          <div className="hidden lg:flex lg:flex-col">
-            <TranscriptPanel
-              recording={recording}
-              transcriptSearch={transcriptSearch}
-              onTranscriptSearchChange={setTranscriptSearch}
-              onTranscribe={() => transcribeMutation.mutate()}
-              isTranscribing={transcribeMutation.isPending}
-              onSeek={handleSeek}
-              variant="panel"
-            />
-            {transcriptActions}
-          </div>
-        )}
-        {/* The "panel" variant is already `hidden lg:flex` with its own width
-            and border, so it needs no wrapper here. (The transcript panel above
-            keeps one only because transcriptActions sits under it.) */}
-        {showChat && (
-          <ChatPanel
-            recording={recording}
-            chatSearch={chatSearch}
-            onChatSearchChange={setChatSearch}
-            onSeek={handleSeek}
-            variant="panel"
-          />
-        )}
       </div>
 
       {recording && (

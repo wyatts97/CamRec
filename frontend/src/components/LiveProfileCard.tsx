@@ -6,7 +6,6 @@ import { Button } from '@/components/selia/button'
 import { Badge } from '@/components/selia/badge'
 import { Heading } from '@/components/selia/heading'
 import { Text } from '@/components/selia/text'
-import ChatStatusBadge from '@/components/ChatStatusBadge'
 import FlvPlayer from '@/components/FlvPlayer'
 import { api, type ActiveRecording } from '@/lib/api'
 import { cn, formatDuration } from '@/lib/utils'
@@ -22,14 +21,16 @@ export interface LiveProfileCardProps {
   recordPending?: boolean
   /** Live page: play the stream inside the card instead of linking away. */
   playable?: boolean
+  /** Show the live room snapshot instead of the avatar (refreshed every minute). */
+  screencap?: boolean
   onAvatarError?: () => void
   className?: string
 }
 
 /**
- * A live creator as a photo card: their avatar fills the card, with name,
- * @handle and the primary action over a gradient. Adapted from Selia's
- * profile block.
+ * A live model as a photo card: the room snapshot (or avatar) fills the card,
+ * with name, handle and the primary action over a gradient. Adapted from
+ * Selia's profile block.
  */
 export default function LiveProfileCard({
   userId,
@@ -39,12 +40,23 @@ export default function LiveProfileCard({
   onRecord,
   recordPending,
   playable = false,
+  screencap = true,
   onAvatarError,
   className,
 }: LiveProfileCardProps) {
   const [imageFailed, setImageFailed] = useState(false)
+  const [screencapFailed, setScreencapFailed] = useState(false)
   const [playing, setPlaying] = useState(false)
+  const [bust, setBust] = useState(() => Math.floor(Date.now() / 60000))
   const name = displayName || username
+  const useScreencap = screencap && !screencapFailed
+
+  // Room snapshots change constantly; refresh once a minute.
+  useEffect(() => {
+    if (!useScreencap) return
+    const t = setInterval(() => setBust(Math.floor(Date.now() / 60000)), 60000)
+    return () => clearInterval(t)
+  }, [useScreencap])
 
   return (
     <Card
@@ -67,12 +79,16 @@ export default function LiveProfileCard({
         </div>
       ) : (
         <img
-          src={api.users.getAvatarUrl(userId)}
-          alt={`${name} (@${username})`}
+          src={useScreencap ? api.users.getScreencapUrl(userId, bust) : api.users.getAvatarUrl(userId)}
+          alt={`${name} (${username})`}
           className="absolute inset-0 size-full object-cover rounded-xl transition-transform duration-700 group-hover:scale-[1.03] motion-reduce:transition-none"
           loading="lazy"
           decoding="async"
           onError={() => {
+            if (useScreencap) {
+              setScreencapFailed(true)
+              return
+            }
             setImageFailed(true)
             onAvatarError?.()
           }}
@@ -93,14 +109,13 @@ export default function LiveProfileCard({
       {!playing && (
         <CardBody className="absolute bottom-0 inset-x-0 p-6 z-10">
           <Heading size="md" className="truncate">{name}</Heading>
-          <Text className="text-muted truncate">@{username}</Text>
+          <Text className="text-muted truncate">{username}</Text>
 
           {recording && (
             <div className="flex flex-wrap items-center gap-2 mt-3">
               <Badge variant="secondary" size="sm" className="tabular-nums">
                 REC {formatDuration(recording.duration_seconds)}
               </Badge>
-              <ChatStatusBadge recording={recording} />
             </div>
           )}
 
@@ -159,7 +174,7 @@ export default function LiveProfileCard({
 /** The live stream, playing inside the card (Live page). */
 function InlineStream({ recordingId, onClose }: { recordingId: number; onClose: () => void }) {
   const [liveUrl, setLiveUrl] = useState<string | null>(null)
-  const [streamType, setStreamType] = useState<'hls' | 'flv' | 'rtmp'>('flv')
+  const [streamType, setStreamType] = useState<'hls'>('hls')
   const [failed, setFailed] = useState(false)
 
   const fetchLiveUrl = useCallback(async () => {
@@ -173,7 +188,7 @@ function InlineStream({ recordingId, onClose }: { recordingId: number; onClose: 
     }
   }, [recordingId])
 
-  // TikTok stream URLs expire, so refresh while playing.
+  // Re-resolve periodically so a stream that moved CDN nodes recovers.
   useEffect(() => {
     fetchLiveUrl()
     const interval = setInterval(fetchLiveUrl, 30000)

@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
-import { Scissors, Search, Download, Trash2, X, Package, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Scissors, Search, Download, Trash2, X, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/selia/button'
 import { Input } from '@/components/selia/input'
 import { Select, SelectTrigger, SelectValue, SelectPopup, SelectList, SelectItem } from '@/components/selia/select'
@@ -9,14 +9,13 @@ import { Pagination, PaginationList, PaginationItem, PaginationButton } from '@/
 import EmptyState from '@/components/EmptyState'
 import QueryError from '@/components/QueryError'
 import { ClipCard } from '@/components/ui/clip-card'
-import ExportProgress from '@/components/ExportProgress'
-import { useExportJob } from '@/hooks/useExportJob'
 import { VideoGridSkeleton } from '@/components/Skeleton'
 import { StaggerContainer, StaggerItem } from '@/components/motion'
 import { useConfirm } from '@/components/ConfirmDialog'
 import { api, type Clip } from '@/lib/api'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import toast from 'react-hot-toast'
+import { downloadFiles } from '@/lib/utils'
 
 const ITEMS_PER_PAGE = 12
 
@@ -82,17 +81,16 @@ export default function Clips() {
     },
   })
 
-  // Selected-items download goes through the same background export job
-  // as Download All, so it gets the same progress bar. It previously used
-  // a blocking blob fetch with no feedback at all.
-  const handleBatchDownload = (ids: number[]) => startExport('clips', ids)
-
-  const { job: exportJob, start: startExport, cancel: cancelExport, isExporting } =
-    useExportJob()
-
-  // Exports run as a background job with progress; the old blocking
-  // blob download gave no feedback for minutes on a large library.
-  const handleDownloadAll = () => startExport('clips')
+  // Selected items download as individual files, one after another.
+  const [isDownloading, setIsDownloading] = useState(false)
+  const handleBatchDownload = async (ids: number[]) => {
+    setIsDownloading(true)
+    try {
+      await downloadFiles(ids.map((id) => api.clips.getDownloadUrl(id)))
+    } finally {
+      setIsDownloading(false)
+    }
+  }
 
   const queryKey = ['clips', page, sortBy, debouncedSearch] as const
 
@@ -188,22 +186,10 @@ export default function Clips() {
             </SelectList>
           </SelectPopup>
         </Select>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleDownloadAll}
-          title="Download all clips as ZIP"
-          disabled={isExporting}
-        >
-          <Package className="h-3.5 w-3.5 mr-1.5" />
-          Download All
-        </Button>
         <span className="text-xs text-muted-foreground">
           {total} clip{total !== 1 ? 's' : ''}
         </span>
       </div>
-
-      {exportJob && <ExportProgress job={exportJob} onCancel={cancelExport} />}
 
       {selectedIds.size > 0 && (
         <div className="flex items-center gap-3 p-3 rounded-lg bg-secondary border border-border/50">
@@ -215,7 +201,7 @@ export default function Clips() {
             variant="outline"
             size="sm"
             onClick={() => handleBatchDownload(Array.from(selectedIds))}
-            disabled={isExporting}
+            disabled={isDownloading}
           >
             <Download className="h-3.5 w-3.5 mr-1.5" />
             Download Selected

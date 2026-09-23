@@ -34,6 +34,23 @@ export function formatDuration(seconds: number | null | undefined): string {
   return `${mins}:${secs.toString().padStart(2, "0")}`
 }
 
+/**
+ * Download files one after another via temporary <a download> links. Browsers
+ * block a burst of simultaneous downloads, so they are spaced out slightly.
+ */
+export async function downloadFiles(urls: string[], gapMs = 400): Promise<void> {
+  for (const url of urls) {
+    const a = document.createElement("a")
+    a.href = url
+    a.download = ""
+    a.rel = "noopener"
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    await new Promise((resolve) => setTimeout(resolve, gapMs))
+  }
+}
+
 export function formatDate(date: string | Date | null | undefined, timeZone = "UTC"): string {
   if (!date) return "--"
   let input = date

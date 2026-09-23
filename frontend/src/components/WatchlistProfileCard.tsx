@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Circle, Ellipsis, Play, RefreshCw, Trash2, Tv } from 'lucide-react'
+import { Circle, EyeOff, Ellipsis, Play, RefreshCw, Trash2, Tv } from 'lucide-react'
 import { Card, CardBody } from '@/components/selia/card'
 import { Badge } from '@/components/selia/badge'
 import { Button } from '@/components/selia/button'
@@ -12,14 +12,12 @@ import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from '@/compone
 import { api, type ActiveRecording, type User } from '@/lib/api'
 import { timeAgo } from '@/lib/notifications'
 import { cn } from '@/lib/utils'
-
-function compactNumber(n: number): string {
-  return new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(n)
-}
+import { roomStateLabel, siteLabel } from '@/lib/sites'
 
 /**
- * A watchlist creator as a photo card: a quieter take on the dashboard's
- * live card, with the watchlist controls (select, monitoring, menu).
+ * A watchlist model as a photo card: a quieter take on the dashboard's live
+ * card, with the watchlist controls (select, monitoring, menu). While the
+ * model is online the live room snapshot replaces the avatar.
  */
 export default function WatchlistProfileCard({
   user,
@@ -45,8 +43,12 @@ export default function WatchlistProfileCard({
   onAvatarError: () => void
 }) {
   const [imageFailed, setImageFailed] = useState(false)
+  const [screencapFailed, setScreencapFailed] = useState(false)
   const name = user.display_name && user.display_name !== user.username ? user.display_name : user.username
   const live = user.is_live || !!recording
+  const isPrivate = !live && user.room_state === 'private'
+  const online = live || isPrivate
+  const useScreencap = online && !screencapFailed
 
   return (
     <Card
@@ -60,7 +62,7 @@ export default function WatchlistProfileCard({
         type="button"
         onClick={onOpen}
         className="absolute inset-0 z-[1] rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-        aria-label={`View details for @${user.username}`}
+        aria-label={`View details for ${user.username}`}
       />
 
       {imageFailed ? (
@@ -69,7 +71,7 @@ export default function WatchlistProfileCard({
         </div>
       ) : (
         <img
-          src={api.users.getAvatarUrl(user.id)}
+          src={useScreencap ? api.users.getScreencapUrl(user.id, user.last_checked ?? undefined) : api.users.getAvatarUrl(user.id)}
           alt=""
           className={cn(
             'absolute inset-0 size-full object-cover rounded-xl transition-[transform,filter] duration-700 group-hover:scale-[1.03] motion-reduce:transition-none',
@@ -78,6 +80,10 @@ export default function WatchlistProfileCard({
           loading="lazy"
           decoding="async"
           onError={() => {
+            if (useScreencap) {
+              setScreencapFailed(true)
+              return
+            }
             setImageFailed(true)
             onAvatarError()
           }}
@@ -93,13 +99,18 @@ export default function WatchlistProfileCard({
             <Circle className="fill-red-500 text-red-500" aria-hidden="true" />
             {recording ? 'REC' : 'LIVE'}
           </Badge>
+        ) : isPrivate ? (
+          <Badge pill size="sm" className="font-semibold tracking-wide bg-black/60 text-amber-300 backdrop-blur-sm">
+            <EyeOff className="text-amber-300" aria-hidden="true" />
+            PRIVATE
+          </Badge>
         ) : (
           <span />
         )}
         <Checkbox
           checked={selected}
           onCheckedChange={(checked) => onSelectedChange(checked)}
-          aria-label={`Select @${user.username}`}
+          aria-label={`Select ${user.username}`}
           className={cn(
             'pointer-events-auto bg-card/80 backdrop-blur transition-opacity',
             !selected && 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100',
@@ -109,10 +120,10 @@ export default function WatchlistProfileCard({
 
       <CardBody className="absolute bottom-0 inset-x-0 p-5 z-10 pointer-events-none">
         <Heading size="sm" className="truncate">{name}</Heading>
-        <Text className="text-sm text-muted truncate">@{user.username}</Text>
-        {user.bio && <Text className="text-sm text-dimmed line-clamp-2 mt-1.5">{user.bio}</Text>}
+        <Text className="text-sm text-muted truncate">{user.username}</Text>
         <p className="text-xs text-dimmed mt-2 flex flex-wrap gap-x-2">
-          {user.follower_count != null && <span>{compactNumber(user.follower_count)} followers</span>}
+          <span>{siteLabel(user.site)}</span>
+          <span>· {roomStateLabel(user.room_state)}</span>
           {user.last_checked && <span>· checked {timeAgo(user.last_checked)}</span>}
         </p>
 
@@ -121,7 +132,7 @@ export default function WatchlistProfileCard({
             <Switch
               checked={user.is_monitoring}
               onCheckedChange={(checked) => onToggleMonitoring(checked)}
-              aria-label={`Monitor @${user.username}`}
+              aria-label={`Monitor ${user.username}`}
             />
             {user.is_monitoring ? 'Monitoring' : 'Not monitored'}
           </label>
@@ -141,7 +152,7 @@ export default function WatchlistProfileCard({
             )}
             <Menu>
               <MenuTrigger
-                render={<Button variant="plain" size="sm-icon" pill aria-label={`More actions for @${user.username}`} />}
+                render={<Button variant="plain" size="sm-icon" pill aria-label={`More actions for ${user.username}`} />}
               >
                 <Ellipsis />
               </MenuTrigger>

@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Save, AlertCircle, CheckCircle2, ExternalLink, Trash2, Archive, Globe, Activity, Cookie, Send, Video, Clock, Palette } from 'lucide-react'
+import { Save, AlertCircle, CheckCircle2, Trash2, Archive, Globe, Activity, Video, Clock, Palette, ShieldAlert } from 'lucide-react'
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from '@/components/selia/card'
 import { Button } from '@/components/selia/button'
 import { IconBox } from '@/components/selia/icon-box'
@@ -23,11 +23,106 @@ import {
   TabsList,
   TabsItem,
 } from '@/components/selia/tabs'
-import { api, type Settings } from '@/lib/api'
+import { api, type AutoCleanupConfig, type PreferredQuality, type Settings } from '@/lib/api'
 import toast from 'react-hot-toast'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import AccentPicker from '@/components/AccentPicker'
 import ThemeOptions from '@/components/ThemeOptions'
+
+const QUALITY_OPTIONS: { value: PreferredQuality; label: string }[] = [
+  { value: 'best', label: 'Best available' },
+  { value: '1080', label: 'Up to 1080p' },
+  { value: '720', label: 'Up to 720p' },
+  { value: '540', label: 'Up to 540p' },
+  { value: '360', label: 'Up to 360p' },
+]
+
+const TIMEZONES: { group: string; zones: [string, string][] }[] = [
+  { group: 'UTC', zones: [['UTC', 'UTC']] },
+  {
+    group: 'Americas',
+    zones: [
+      ['America/New_York', 'Eastern Time — New York (ET)'],
+      ['America/Chicago', 'Central Time — Chicago (CT)'],
+      ['America/Denver', 'Mountain Time — Denver (MT)'],
+      ['America/Phoenix', 'Mountain Time — Phoenix (no DST)'],
+      ['America/Los_Angeles', 'Pacific Time — Los Angeles (PT)'],
+      ['America/Anchorage', 'Alaska Time — Anchorage'],
+      ['Pacific/Honolulu', 'Hawaii Time — Honolulu'],
+      ['America/Toronto', 'Eastern Time — Toronto'],
+      ['America/Vancouver', 'Pacific Time — Vancouver'],
+      ['America/Sao_Paulo', 'Brasília Time — São Paulo'],
+      ['America/Argentina/Buenos_Aires', 'Argentina — Buenos Aires'],
+      ['America/Mexico_City', 'Central Time — Mexico City'],
+      ['America/Bogota', 'Colombia Time — Bogotá'],
+    ],
+  },
+  {
+    group: 'Europe',
+    zones: [
+      ['Europe/London', 'GMT/BST — London'],
+      ['Europe/Paris', 'CET/CEST — Paris'],
+      ['Europe/Berlin', 'CET/CEST — Berlin'],
+      ['Europe/Madrid', 'CET/CEST — Madrid'],
+      ['Europe/Rome', 'CET/CEST — Rome'],
+      ['Europe/Amsterdam', 'CET/CEST — Amsterdam'],
+      ['Europe/Warsaw', 'CET/CEST — Warsaw'],
+      ['Europe/Stockholm', 'CET/CEST — Stockholm'],
+      ['Europe/Athens', 'EET/EEST — Athens'],
+      ['Europe/Bucharest', 'EET/EEST — Bucharest'],
+      ['Europe/Kiev', 'EET/EEST — Kyiv'],
+      ['Europe/Moscow', 'MSK — Moscow'],
+      ['Europe/Istanbul', 'TRT — Istanbul'],
+    ],
+  },
+  {
+    group: 'Asia & Pacific',
+    zones: [
+      ['Asia/Dubai', 'GST — Dubai'],
+      ['Asia/Kolkata', 'IST — India'],
+      ['Asia/Bangkok', 'ICT — Bangkok'],
+      ['Asia/Singapore', 'SGT — Singapore'],
+      ['Asia/Manila', 'PHT — Manila'],
+      ['Asia/Shanghai', 'CST — China'],
+      ['Asia/Tokyo', 'JST — Japan'],
+      ['Asia/Seoul', 'KST — Seoul'],
+      ['Australia/Sydney', 'AEDT/AEST — Sydney'],
+      ['Australia/Perth', 'AWST — Perth'],
+      ['Pacific/Auckland', 'NZDT/NZST — Auckland'],
+    ],
+  },
+  {
+    group: 'Africa',
+    zones: [
+      ['Africa/Cairo', 'EET — Cairo'],
+      ['Africa/Johannesburg', 'SAST — Johannesburg'],
+      ['Africa/Lagos', 'WAT — Lagos'],
+      ['Africa/Nairobi', 'EAT — Nairobi'],
+    ],
+  },
+]
+
+function StatusRow({ label, ok, okText, badText, neutral }: {
+  label: string
+  ok: boolean
+  okText: string
+  badText: string
+  neutral?: boolean
+}) {
+  return (
+    <div className="flex items-center justify-between p-3 rounded-lg bg-secondary">
+      <span className="text-sm font-medium">{label}</span>
+      <div className="flex items-center gap-2">
+        <IconBox variant={ok ? 'success-subtle' : neutral ? 'secondary-subtle' : 'warning-subtle'} size="sm">
+          {ok ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+        </IconBox>
+        <span className={cn('text-sm', ok ? 'text-success' : neutral ? 'text-muted-foreground' : 'text-warning')}>
+          {ok ? okText : badText}
+        </span>
+      </div>
+    </div>
+  )
+}
 
 export default function SettingsPage() {
   const queryClient = useQueryClient()
@@ -80,8 +175,15 @@ export default function SettingsPage() {
     )
   }
 
-  // Host CPU and RAM (moved here from the dashboard). Shared by the desktop
-  // and mobile status cards.
+  const cleanup: AutoCleanupConfig = {
+    enabled: formData.auto_cleanup?.enabled ?? false,
+    days: formData.auto_cleanup?.days ?? 7,
+    action: formData.auto_cleanup?.action ?? 'delete',
+  }
+  const setCleanup = (patch: Partial<AutoCleanupConfig>) =>
+    setFormData({ ...formData, auto_cleanup: { ...cleanup, ...patch } })
+
+  // Host CPU and RAM, shown under the status rows.
   const resourceMeters =
     health?.cpu_percent != null && health?.ram_percent != null ? (
       <div className="grid gap-4 p-3 rounded-lg bg-secondary">
@@ -104,594 +206,278 @@ export default function SettingsPage() {
       </div>
     ) : null
 
-  // Rendered in both the desktop card list and the mobile cookies tab.
-  const chatAuthToggle = (id: string) => (
-    <div className="flex items-start justify-between gap-4 pt-2 border-t border-border">
-      <div>
-        <Label htmlFor={id}>Use session for live chat capture</Label>
-        <p className="text-xs text-muted-foreground mt-1">
-          Chat connects anonymously by default. Turning this on sends your session ID to the
-          Euler Stream sign server, which TikTok refuses less often from a VPS. A session ID
-          grants full access to your TikTok account, so only enable it if you accept that risk.
-        </p>
-      </div>
-      <Switch
-        id={id}
-        checked={formData.chat_authenticated || false}
-        onCheckedChange={() =>
-          setFormData({ ...formData, chat_authenticated: !formData.chat_authenticated })
-        }
-      />
-    </div>
-  )
-
-  const tabs = [
-    { id: 'status', label: 'Status', icon: Activity },
-    { id: 'cookies', label: 'Cookies', icon: Cookie },
-    { id: 'telegram', label: 'Telegram', icon: Send },
-    { id: 'recording', label: 'Recording', icon: Video },
-    { id: 'cleanup', label: 'Cleanup', icon: Trash2 },
-    { id: 'timezone', label: 'Timezone', icon: Clock },
-    { id: 'appearance', label: 'Appearance', icon: Palette },
-  ]
-
-  const sectionContent = (
-    <>
-      <Card id="settings-status">
-        <CardHeader>
-          <CardTitle>System Status</CardTitle>
-          <CardDescription>Current system health and configuration status</CardDescription>
-        </CardHeader>
-        <CardBody className="space-y-4">
-          <div className="flex items-center justify-between p-3 rounded-lg bg-secondary">
-            <span className="text-sm font-medium">API Status</span>
-            <div className="flex items-center gap-2">
-              {health?.status === 'healthy' ? (
-                <>
-                  <IconBox variant="success-subtle" size="sm">
-                    <CheckCircle2 className="h-4 w-4" />
-                  </IconBox>
-                  <span className="text-sm text-success">Healthy</span>
-                </>
-              ) : (
-                <>
-                  <IconBox variant="warning-subtle" size="sm">
-                    <AlertCircle className="h-4 w-4" />
-                  </IconBox>
-                  <span className="text-sm text-warning">Unknown</span>
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between p-3 rounded-lg bg-secondary">
-            <span className="text-sm font-medium">Recorder</span>
-            <div className="flex items-center gap-2">
-              {health?.recorder_available ? (
-                <>
-                  <IconBox variant="success-subtle" size="sm">
-                    <CheckCircle2 className="h-4 w-4" />
-                  </IconBox>
-                  <span className="text-sm text-success">Ready</span>
-                </>
-              ) : (
-                <>
-                  <IconBox variant="warning-subtle" size="sm">
-                    <AlertCircle className="h-4 w-4" />
-                  </IconBox>
-                  <span className="text-sm text-warning">Unavailable</span>
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between p-3 rounded-lg bg-secondary">
-            <span className="text-sm font-medium">Region Status</span>
-            <div className="flex items-center gap-2">
-              {health?.country_blacklisted ? (
-                <>
-                  <IconBox variant="warning-subtle" size="sm">
-                    <AlertCircle className="h-4 w-4" />
-                  </IconBox>
-                  <span className="text-sm text-warning">Restricted</span>
-                </>
-              ) : (
-                <>
-                  <IconBox variant="success-subtle" size="sm">
-                    <CheckCircle2 className="h-4 w-4" />
-                  </IconBox>
-                  <span className="text-sm text-success">OK</span>
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between p-3 rounded-lg bg-secondary">
-            <span className="text-sm font-medium">Cookies</span>
-            <div className="flex items-center gap-2">
-              {health?.cookies_configured ? (
-                <>
-                  <IconBox variant="success-subtle" size="sm">
-                    <CheckCircle2 className="h-4 w-4" />
-                  </IconBox>
-                  <span className="text-sm text-success">Configured</span>
-                </>
-              ) : (
-                <>
-                  <IconBox variant="secondary-subtle" size="sm">
-                    <AlertCircle className="h-4 w-4" />
-                  </IconBox>
-                  <span className="text-sm text-muted-foreground">Not Set</span>
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between p-3 rounded-lg bg-secondary">
-            <span className="text-sm font-medium">Output Directory</span>
-            <span className="text-sm text-muted-foreground truncate max-w-[200px]">
-              {health?.recordings_dir || settings?.output_dir}
-            </span>
-          </div>
-          {resourceMeters}
-        </CardBody>
-      </Card>
-
-      <Card id="settings-cookies">
-        <CardHeader>
-          <CardTitle>TikTok Cookies</CardTitle>
-          <CardDescription>
-            Required for accessing restricted content.{' '}
-            <a
-              href="https://github.com/Michele0303/tiktok-live-recorder/blob/main/docs/GUIDE.md#how-to-set-cookies"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary-ink hover:underline inline-flex items-center gap-1"
-            >
-              Learn how <ExternalLink className="h-3 w-3" />
-            </a>
-          </CardDescription>
-        </CardHeader>
-        <CardBody className="space-y-4">
-          <form autoComplete="off" onSubmit={(e) => e.preventDefault()}>
-            <div className="grid gap-2">
-              <Label htmlFor="sessionid_ss">Session ID (sessionid_ss)</Label>
-              <Input
-                id="sessionid_ss"
-                name="sessionid_ss"
-                type="password"
-                autoComplete="off"
-                placeholder="Enter your TikTok session ID"
-                value={formData.cookies?.sessionid_ss || ''}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    cookies: {
-                      ...formData.cookies,
-                      sessionid_ss: e.target.value,
-                      tt_target_idc: formData.cookies?.tt_target_idc || 'useast2a',
-                    },
-                  })
-                }
+  // Each card is rendered once in the desktop grid, or one per tab on mobile.
+  // `p` prefixes form ids so the two layouts never share an id.
+  const cards: { id: string; label: string; icon: typeof Activity; render: (p: string) => ReactNode }[] = [
+    {
+      id: 'status',
+      label: 'Status',
+      icon: Activity,
+      render: () => (
+        <Card id="settings-status">
+          <CardHeader>
+            <CardTitle>System Status</CardTitle>
+            <CardDescription>Backend health and cam site reachability</CardDescription>
+          </CardHeader>
+          <CardBody className="space-y-4">
+            <StatusRow label="API Status" ok={health?.status === 'healthy'} okText="Healthy" badText="Unknown" />
+            {(health?.sites ?? []).map((site) => (
+              <StatusRow
+                key={site.name}
+                label={site.label}
+                ok={site.reachable && !site.blocked}
+                okText="Reachable"
+                badText={site.blocked ? 'Blocked' : 'Unreachable'}
               />
+            ))}
+            {health?.monitor_error && (
+              <div className="flex items-start gap-2 p-3 rounded-lg bg-warning/10 text-sm text-warning">
+                <ShieldAlert className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>Last watchlist check failed: {health.monitor_error}</span>
+              </div>
+            )}
+            <div className="flex items-center justify-between p-3 rounded-lg bg-secondary">
+              <span className="text-sm font-medium">Output Directory</span>
+              <span className="text-sm text-muted-foreground truncate max-w-[200px]">
+                {health?.recordings_dir || settings?.output_dir}
+              </span>
             </div>
-          </form>
-          <form autoComplete="off" onSubmit={(e) => e.preventDefault()}>
+            {resourceMeters}
+          </CardBody>
+        </Card>
+      ),
+    },
+    {
+      id: 'recording',
+      label: 'Recording',
+      icon: Video,
+      render: (p) => (
+        <Card id="settings-recording">
+          <CardHeader>
+            <CardTitle>Recording Settings</CardTitle>
+            <CardDescription>How often models are checked and how shows are captured</CardDescription>
+          </CardHeader>
+          <CardBody className="space-y-4">
             <div className="grid gap-2">
-              <Label htmlFor="tt_target_idc">Target IDC (tt-target-idc)</Label>
+              <Label htmlFor={`${p}interval`}>Check interval (minutes)</Label>
               <Input
-                id="tt_target_idc"
-                name="tt_target_idc"
-                placeholder="useast2a"
-                autoComplete="off"
-                value={formData.cookies?.tt_target_idc || ''}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    cookies: {
-                      ...formData.cookies,
-                      sessionid_ss: formData.cookies?.sessionid_ss || '',
-                      tt_target_idc: e.target.value,
-                    },
-                  })
-                }
+                id={`${p}interval`}
+                type="number"
+                min="1"
+                placeholder="2"
+                value={formData.automatic_interval || 2}
+                onChange={(e) => setFormData({ ...formData, automatic_interval: parseInt(e.target.value) || 2 })}
               />
-            </div>
-          </form>
-          {chatAuthToggle('chat_authenticated')}
-        </CardBody>
-      </Card>
-
-      <Card id="settings-telegram">
-        <CardHeader>
-          <CardTitle>Telegram Integration</CardTitle>
-          <CardDescription>
-            Upload recordings to Telegram automatically.{' '}
-            <a
-              href="https://github.com/Michele0303/tiktok-live-recorder/blob/main/docs/GUIDE.md#how-to-enable-upload-to-telegram"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary-ink hover:underline inline-flex items-center gap-1"
-            >
-              Learn how <ExternalLink className="h-3 w-3" />
-            </a>
-          </CardDescription>
-        </CardHeader>
-        <CardBody className="space-y-4">
-          <form autoComplete="off" onSubmit={(e) => e.preventDefault()}>
-            <div className="grid gap-2">
-              <Label htmlFor="api_id">API ID</Label>
-              <Input
-                id="api_id"
-                name="api_id"
-                placeholder="Enter your Telegram API ID"
-                autoComplete="off"
-                value={formData.telegram?.api_id || ''}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    telegram: {
-                      ...formData.telegram,
-                      api_id: e.target.value,
-                      api_hash: formData.telegram?.api_hash || '',
-                      chat_id: formData.telegram?.chat_id || 'me',
-                    },
-                  })
-                }
-              />
-            </div>
-          </form>
-          <form autoComplete="off" onSubmit={(e) => e.preventDefault()}>
-            <div className="grid gap-2">
-              <Label htmlFor="api_hash">API Hash</Label>
-              <Input
-                id="api_hash"
-                name="api_hash"
-                type="password"
-                autoComplete="off"
-                placeholder="Enter your Telegram API Hash"
-                value={formData.telegram?.api_hash || ''}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    telegram: {
-                      ...formData.telegram,
-                      api_id: formData.telegram?.api_id || '',
-                      api_hash: e.target.value,
-                      chat_id: formData.telegram?.chat_id || 'me',
-                    },
-                  })
-                }
-              />
-            </div>
-          </form>
-          <form autoComplete="off" onSubmit={(e) => e.preventDefault()}>
-            <div className="grid gap-2">
-              <Label htmlFor="chat_id">Chat ID</Label>
-              <Input
-                id="chat_id"
-                name="chat_id"
-                placeholder="me"
-                autoComplete="off"
-                value={formData.telegram?.chat_id || ''}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    telegram: {
-                      ...formData.telegram,
-                      api_id: formData.telegram?.api_id || '',
-                      api_hash: formData.telegram?.api_hash || '',
-                      chat_id: e.target.value,
-                    },
-                  })
-                }
-              />
-            </div>
-          </form>
-        </CardBody>
-      </Card>
-
-      <Card id="settings-recording">
-        <CardHeader>
-          <CardTitle>Recording Settings</CardTitle>
-          <CardDescription>Configure default recording behavior</CardDescription>
-        </CardHeader>
-        <CardBody className="space-y-4">
-          <div className="grid gap-2">
-            <Label htmlFor="proxy">HTTP Proxy</Label>
-            <Input
-              id="proxy"
-              placeholder="http://127.0.0.1:8080"
-              value={formData.proxy || ''}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  proxy: e.target.value || null,
-                })
-              }
-            />
-            <p className="text-xs text-muted-foreground">
-              Use a proxy to bypass regional restrictions
-            </p>
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="bitrate">Default Bitrate</Label>
-            <Input
-              id="bitrate"
-              placeholder="e.g., 1M, 1000k (leave empty for original)"
-              value={formData.default_bitrate || ''}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  default_bitrate: e.target.value || null,
-                })
-              }
-            />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="interval">Automatic Check Interval (minutes)</Label>
-            <Input
-              id="interval"
-              type="number"
-              min="1"
-              placeholder="5"
-              value={formData.automatic_interval || 5}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  automatic_interval: parseInt(e.target.value) || 5,
-                })
-              }
-            />
-          </div>
-        </CardBody>
-      </Card>
-
-      <Card id="settings-cleanup">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Trash2 className="h-5 w-5" />
-            Auto-Cleanup
-          </CardTitle>
-          <CardDescription>
-            Automatically clean up old recordings to save disk space
-          </CardDescription>
-        </CardHeader>
-        <CardBody className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <Label>Enable Auto-Cleanup</Label>
               <p className="text-xs text-muted-foreground">
-                Automatically process old recordings
+                One request covers every online model, so short intervals are cheap and catch shows sooner.
               </p>
             </div>
-            <Switch
-              checked={formData.auto_cleanup?.enabled || false}
-              onCheckedChange={() =>
-                setFormData({
-                  ...formData,
-                  auto_cleanup: {
-                    ...formData.auto_cleanup,
-                    enabled: !formData.auto_cleanup?.enabled,
-                    days: formData.auto_cleanup?.days || 7,
-                    action: formData.auto_cleanup?.action || 'delete',
-                  },
-                })
-              }
-            />
-          </div>
-
-          {formData.auto_cleanup?.enabled && (
-            <>
-              <div className="grid gap-2">
-                <Label>Retention Period</Label>
-                <Select
-                  value={String(formData.auto_cleanup?.days || 7)}
-                  onValueChange={(v) =>
-                    setFormData({
-                      ...formData,
-                      auto_cleanup: {
-                        ...formData.auto_cleanup,
-                        enabled: formData.auto_cleanup?.enabled || false,
-                        days: parseInt(String(v)),
-                        action: formData.auto_cleanup?.action || 'delete',
-                      },
-                    })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectPopup>
-                    <SelectList>
-                      <SelectItem value="1">1 day</SelectItem>
-                      <SelectItem value="3">3 days</SelectItem>
-                      <SelectItem value="7">7 days</SelectItem>
-                      <SelectItem value="14">14 days</SelectItem>
-                      <SelectItem value="30">30 days</SelectItem>
-                    </SelectList>
-                  </SelectPopup>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Recordings older than this will be processed
-                </p>
+            <div className="grid gap-2">
+              <Label>Preferred quality</Label>
+              <Select
+                value={formData.preferred_quality || 'best'}
+                onValueChange={(v) => setFormData({ ...formData, preferred_quality: v as PreferredQuality })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectPopup>
+                  <SelectList>
+                    {QUALITY_OPTIONS.map((q) => (
+                      <SelectItem key={q.value} value={q.value}>{q.label}</SelectItem>
+                    ))}
+                  </SelectList>
+                </SelectPopup>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor={`${p}max-hours`}>Maximum recording length (hours)</Label>
+              <Input
+                id={`${p}max-hours`}
+                type="number"
+                min="1"
+                placeholder="8"
+                value={formData.max_recording_hours || 8}
+                onChange={(e) => setFormData({ ...formData, max_recording_hours: parseInt(e.target.value) || 8 })}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor={`${p}proxy`}>HTTP Proxy</Label>
+              <Input
+                id={`${p}proxy`}
+                placeholder="http://127.0.0.1:8080"
+                value={formData.proxy || ''}
+                onChange={(e) => setFormData({ ...formData, proxy: e.target.value || null })}
+              />
+              <p className="text-xs text-muted-foreground">
+                Optional. Used for status checks and stream capture.
+              </p>
+            </div>
+            <p className="text-xs text-muted-foreground border-t border-border pt-3">
+              Only public (free chat) shows are recorded. When a model goes private the
+              recording pauses and resumes if the show returns to public.
+            </p>
+          </CardBody>
+        </Card>
+      ),
+    },
+    {
+      id: 'cleanup',
+      label: 'Cleanup',
+      icon: Trash2,
+      render: (p) => (
+        <Card id="settings-cleanup">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Trash2 className="h-5 w-5" />
+              Auto-Cleanup
+            </CardTitle>
+            <CardDescription>Automatically clean up old recordings to save disk space</CardDescription>
+          </CardHeader>
+          <CardBody className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <Label>Enable Auto-Cleanup</Label>
+                <p className="text-xs text-muted-foreground">Automatically process old recordings</p>
               </div>
+              <Switch checked={cleanup.enabled} onCheckedChange={() => setCleanup({ enabled: !cleanup.enabled })} />
+            </div>
 
-              <div className="grid gap-2">
-                <Label>Cleanup Action</Label>
-                <div className="flex gap-4">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="cleanup_action"
-                      value="delete"
-                      checked={formData.auto_cleanup?.action === 'delete'}
-                      onChange={() =>
-                        setFormData({
-                          ...formData,
-                          auto_cleanup: {
-                            ...formData.auto_cleanup,
-                            enabled: formData.auto_cleanup?.enabled || false,
-                            days: formData.auto_cleanup?.days || 7,
-                            action: 'delete',
-                          },
-                        })
-                      }
-                      className="h-4 w-4"
-                    />
-                    <Trash2 className="h-4 w-4" />
-                    <span className="text-sm">Delete permanently</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="cleanup_action"
-                      value="compress"
-                      checked={formData.auto_cleanup?.action === 'compress'}
-                      onChange={() =>
-                        setFormData({
-                          ...formData,
-                          auto_cleanup: {
-                            ...formData.auto_cleanup,
-                            enabled: formData.auto_cleanup?.enabled || false,
-                            days: formData.auto_cleanup?.days || 7,
-                            action: 'compress',
-                          },
-                        })
-                      }
-                      className="h-4 w-4"
-                    />
-                    <Archive className="h-4 w-4" />
-                    <span className="text-sm">Compress to backup</span>
-                  </label>
+            {cleanup.enabled && (
+              <>
+                <div className="grid gap-2">
+                  <Label>Retention Period</Label>
+                  <Select value={String(cleanup.days)} onValueChange={(v) => setCleanup({ days: parseInt(String(v)) })}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectPopup>
+                      <SelectList>
+                        <SelectItem value="1">1 day</SelectItem>
+                        <SelectItem value="3">3 days</SelectItem>
+                        <SelectItem value="7">7 days</SelectItem>
+                        <SelectItem value="14">14 days</SelectItem>
+                        <SelectItem value="30">30 days</SelectItem>
+                      </SelectList>
+                    </SelectPopup>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">Recordings older than this will be processed</p>
                 </div>
-              </div>
-            </>
-          )}
-        </CardBody>
-      </Card>
-      <Card id="settings-timezone">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Globe className="h-5 w-5" />
-            Display Timezone
-          </CardTitle>
-          <CardDescription>
-            All timestamps shown in the app will use this timezone
-          </CardDescription>
-        </CardHeader>
-        <CardBody className="space-y-4">
-          <div className="grid gap-2">
-            <Label htmlFor="timezone">Timezone</Label>
-            <select
-              id="timezone"
-              className="flex h-10 w-full rounded-md border border-input-border bg-background px-3 py-2 text-sm"
-              value={formData.timezone || 'UTC'}
-              onChange={(e) => setFormData({ ...formData, timezone: e.target.value })}
-            >
-              <optgroup label="UTC">
-                <option value="UTC">UTC</option>
-              </optgroup>
-              <optgroup label="Americas">
-                <option value="America/New_York">Eastern Time — New York (ET)</option>
-                <option value="America/Chicago">Central Time — Chicago (CT)</option>
-                <option value="America/Denver">Mountain Time — Denver (MT)</option>
-                <option value="America/Phoenix">Mountain Time — Phoenix (no DST)</option>
-                <option value="America/Los_Angeles">Pacific Time — Los Angeles (PT)</option>
-                <option value="America/Anchorage">Alaska Time — Anchorage</option>
-                <option value="Pacific/Honolulu">Hawaii Time — Honolulu</option>
-                <option value="America/Toronto">Eastern Time — Toronto</option>
-                <option value="America/Vancouver">Pacific Time — Vancouver</option>
-                <option value="America/Sao_Paulo">Brasília Time — São Paulo</option>
-                <option value="America/Argentina/Buenos_Aires">Argentina — Buenos Aires</option>
-                <option value="America/Mexico_City">Central Time — Mexico City</option>
-              </optgroup>
-              <optgroup label="Europe">
-                <option value="Europe/London">GMT/BST — London</option>
-                <option value="Europe/Paris">CET/CEST — Paris</option>
-                <option value="Europe/Berlin">CET/CEST — Berlin</option>
-                <option value="Europe/Madrid">CET/CEST — Madrid</option>
-                <option value="Europe/Rome">CET/CEST — Rome</option>
-                <option value="Europe/Amsterdam">CET/CEST — Amsterdam</option>
-                <option value="Europe/Brussels">CET/CEST — Brussels</option>
-                <option value="Europe/Vienna">CET/CEST — Vienna</option>
-                <option value="Europe/Warsaw">CET/CEST — Warsaw</option>
-                <option value="Europe/Stockholm">CET/CEST — Stockholm</option>
-                <option value="Europe/Helsinki">EET/EEST — Helsinki</option>
-                <option value="Europe/Athens">EET/EEST — Athens</option>
-                <option value="Europe/Bucharest">EET/EEST — Bucharest</option>
-                <option value="Europe/Kiev">EET/EEST — Kyiv</option>
-                <option value="Europe/Moscow">MSK — Moscow</option>
-                <option value="Europe/Istanbul">TRT — Istanbul</option>
-              </optgroup>
-              <optgroup label="Asia &amp; Pacific">
-                <option value="Asia/Dubai">GST — Dubai</option>
-                <option value="Asia/Kolkata">IST — India</option>
-                <option value="Asia/Dhaka">BST — Dhaka</option>
-                <option value="Asia/Bangkok">ICT — Bangkok</option>
-                <option value="Asia/Singapore">SGT — Singapore</option>
-                <option value="Asia/Shanghai">CST — China</option>
-                <option value="Asia/Tokyo">JST — Japan</option>
-                <option value="Asia/Seoul">KST — Seoul</option>
-                <option value="Asia/Jakarta">WIB — Jakarta</option>
-                <option value="Asia/Karachi">PKT — Karachi</option>
-                <option value="Asia/Riyadh">AST — Riyadh</option>
-                <option value="Australia/Sydney">AEDT/AEST — Sydney</option>
-                <option value="Australia/Melbourne">AEDT/AEST — Melbourne</option>
-                <option value="Australia/Perth">AWST — Perth</option>
-                <option value="Pacific/Auckland">NZDT/NZST — Auckland</option>
-              </optgroup>
-              <optgroup label="Africa">
-                <option value="Africa/Cairo">EET — Cairo</option>
-                <option value="Africa/Johannesburg">SAST — Johannesburg</option>
-                <option value="Africa/Lagos">WAT — Lagos</option>
-                <option value="Africa/Nairobi">EAT — Nairobi</option>
-              </optgroup>
-            </select>
-          </div>
-          <div className="p-3 rounded-lg bg-secondary text-sm">
-            <span className="text-muted-foreground">Current time in selected zone: </span>
-            <span className="font-medium tabular-nums">
-              {new Date().toLocaleString('en-US', {
-                timeZone: formData.timezone || 'UTC',
-                month: 'short',
-                day: 'numeric',
-                year: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-              })}
-            </span>
-          </div>
-        </CardBody>
-      </Card>
 
-      <Card id="settings-appearance">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Palette className="h-5 w-5" />
-            Appearance
-          </CardTitle>
-          <CardDescription>Choose your preferred theme and accent color</CardDescription>
-        </CardHeader>
-        <CardBody className="space-y-5">
-          <ThemeOptions />
-          <div className="border-t border-border pt-5">
-            <AccentPicker />
-          </div>
-        </CardBody>
-      </Card>
-    </>
-  )
+                <div className="grid gap-2">
+                  <Label>Cleanup Action</Label>
+                  <div className="flex gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name={`${p}cleanup_action`}
+                        value="delete"
+                        checked={cleanup.action === 'delete'}
+                        onChange={() => setCleanup({ action: 'delete' })}
+                        className="h-4 w-4"
+                      />
+                      <Trash2 className="h-4 w-4" />
+                      <span className="text-sm">Delete permanently</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name={`${p}cleanup_action`}
+                        value="compress"
+                        checked={cleanup.action === 'compress'}
+                        onChange={() => setCleanup({ action: 'compress' })}
+                        className="h-4 w-4"
+                      />
+                      <Archive className="h-4 w-4" />
+                      <span className="text-sm">Compress to backup</span>
+                    </label>
+                  </div>
+                </div>
+              </>
+            )}
+          </CardBody>
+        </Card>
+      ),
+    },
+    {
+      id: 'timezone',
+      label: 'Timezone',
+      icon: Clock,
+      render: (p) => (
+        <Card id="settings-timezone">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Globe className="h-5 w-5" />
+              Display Timezone
+            </CardTitle>
+            <CardDescription>All timestamps shown in the app will use this timezone</CardDescription>
+          </CardHeader>
+          <CardBody className="space-y-4">
+            <div className="grid gap-2">
+              <Label htmlFor={`${p}timezone`}>Timezone</Label>
+              <select
+                id={`${p}timezone`}
+                className="flex h-10 w-full rounded-md border border-input-border bg-background px-3 py-2 text-sm"
+                value={formData.timezone || 'UTC'}
+                onChange={(e) => setFormData({ ...formData, timezone: e.target.value })}
+              >
+                {TIMEZONES.map(({ group, zones }) => (
+                  <optgroup key={group} label={group}>
+                    {zones.map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+            <div className="p-3 rounded-lg bg-secondary text-sm">
+              <span className="text-muted-foreground">Current time in selected zone: </span>
+              <span className="font-medium tabular-nums">
+                {new Date().toLocaleString('en-US', {
+                  timeZone: formData.timezone || 'UTC',
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                })}
+              </span>
+            </div>
+          </CardBody>
+        </Card>
+      ),
+    },
+    {
+      id: 'appearance',
+      label: 'Appearance',
+      icon: Palette,
+      render: () => (
+        <Card id="settings-appearance">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Palette className="h-5 w-5" />
+              Appearance
+            </CardTitle>
+            <CardDescription>Choose your preferred theme and accent color</CardDescription>
+          </CardHeader>
+          <CardBody className="space-y-5">
+            <ThemeOptions />
+            <div className="border-t border-border pt-5">
+              <AccentPicker />
+            </div>
+          </CardBody>
+        </Card>
+      ),
+    },
+  ]
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-foreground tracking-tight">Settings</h1>
-          <p className="text-muted-foreground mt-1">
-            Configure your TikTok recorder settings
-          </p>
+          <p className="text-muted-foreground mt-1">Configure how CamSuite watches and records</p>
         </div>
         <Button onClick={handleSave} disabled={updateSettingsMutation.isPending}>
           <Save className="h-4 w-4 mr-2" />
@@ -700,15 +486,15 @@ export default function SettingsPage() {
       </div>
 
       {isDesktop ? (
-        <>
-          <div className="grid gap-6 md:grid-cols-2">
-            {sectionContent}
-          </div>
-        </>
+        <div className="grid gap-6 md:grid-cols-2">
+          {cards.map((card) => (
+            <div key={card.id} className="contents">{card.render('')}</div>
+          ))}
+        </div>
       ) : (
         <Tabs value={mobileTab} onValueChange={setMobileTab}>
           <TabsList className="w-full flex-wrap h-auto">
-            {tabs.map((tab) => {
+            {cards.map((tab) => {
               const Icon = tab.icon
               return (
                 <TabsItem key={tab.id} value={tab.id} className="gap-1.5">
@@ -718,326 +504,9 @@ export default function SettingsPage() {
               )
             })}
           </TabsList>
-          {tabs.map((tab) => (
+          {cards.map((tab) => (
             <TabsPanel key={tab.id} value={tab.id}>
-              {tab.id === 'status' && (
-                <Card id="settings-status">
-                  <CardHeader>
-                    <CardTitle>System Status</CardTitle>
-                    <CardDescription>Current system health and configuration status</CardDescription>
-                  </CardHeader>
-                  <CardBody className="space-y-4">
-                    <div className="flex items-center justify-between p-3 rounded-lg bg-secondary">
-                      <span className="text-sm font-medium">API Status</span>
-                      <div className="flex items-center gap-2">
-                        {health?.status === 'healthy' ? (
-                          <>
-                            <CheckCircle2 className="h-4 w-4 text-success" />
-                            <span className="text-sm text-success">Healthy</span>
-                          </>
-                        ) : (
-                          <>
-                            <AlertCircle className="h-4 w-4 text-warning" />
-                            <span className="text-sm text-warning">Unknown</span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between p-3 rounded-lg bg-secondary">
-                      <span className="text-sm font-medium">Recorder</span>
-                      <div className="flex items-center gap-2">
-                        {health?.recorder_available ? (
-                          <>
-                            <CheckCircle2 className="h-4 w-4 text-success" />
-                            <span className="text-sm text-success">Ready</span>
-                          </>
-                        ) : (
-                          <>
-                            <AlertCircle className="h-4 w-4 text-warning" />
-                            <span className="text-sm text-warning">Unavailable</span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between p-3 rounded-lg bg-secondary">
-                      <span className="text-sm font-medium">Region Status</span>
-                      <div className="flex items-center gap-2">
-                        {health?.country_blacklisted ? (
-                          <>
-                            <AlertCircle className="h-4 w-4 text-warning" />
-                            <span className="text-sm text-warning">Restricted</span>
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircle2 className="h-4 w-4 text-success" />
-                            <span className="text-sm text-success">OK</span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between p-3 rounded-lg bg-secondary">
-                      <span className="text-sm font-medium">Cookies</span>
-                      <div className="flex items-center gap-2">
-                        {health?.cookies_configured ? (
-                          <>
-                            <CheckCircle2 className="h-4 w-4 text-success" />
-                            <span className="text-sm text-success">Configured</span>
-                          </>
-                        ) : (
-                          <>
-                            <AlertCircle className="h-4 w-4 text-muted-foreground" />
-                            <span className="text-sm text-muted-foreground">Not Set</span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between p-3 rounded-lg bg-secondary">
-                      <span className="text-sm font-medium">Output Directory</span>
-                      <span className="text-sm text-muted-foreground truncate max-w-[200px]">
-                        {health?.recordings_dir || settings?.output_dir}
-                      </span>
-                    </div>
-                    {resourceMeters}
-                  </CardBody>
-                </Card>
-              )}
-              {tab.id === 'cookies' && (
-                <Card id="settings-cookies">
-                  <CardHeader>
-                    <CardTitle>TikTok Cookies</CardTitle>
-                    <CardDescription>
-                      Required for accessing restricted content.{' '}
-                      <a href="https://github.com/Michele0303/tiktok-live-recorder/blob/main/docs/GUIDE.md#how-to-set-cookies" target="_blank" rel="noopener noreferrer" className="text-primary-ink hover:underline inline-flex items-center gap-1">
-                        Learn how <ExternalLink className="h-3 w-3" />
-                      </a>
-                    </CardDescription>
-                  </CardHeader>
-                  <CardBody className="space-y-4">
-                    <form autoComplete="off" onSubmit={(e) => e.preventDefault()}>
-                      <div className="grid gap-2">
-                        <Label htmlFor="m-sessionid_ss">Session ID (sessionid_ss)</Label>
-                        <Input id="m-sessionid_ss" name="sessionid_ss" type="password" autoComplete="off" placeholder="Enter your TikTok session ID" value={formData.cookies?.sessionid_ss || ''} onChange={(e) => setFormData({ ...formData, cookies: { ...formData.cookies, sessionid_ss: e.target.value, tt_target_idc: formData.cookies?.tt_target_idc || 'useast2a' } })} />
-                      </div>
-                    </form>
-                    <form autoComplete="off" onSubmit={(e) => e.preventDefault()}>
-                      <div className="grid gap-2">
-                        <Label htmlFor="m-tt_target_idc">Target IDC (tt-target-idc)</Label>
-                        <Input id="m-tt_target_idc" name="tt_target_idc" placeholder="useast2a" autoComplete="off" value={formData.cookies?.tt_target_idc || ''} onChange={(e) => setFormData({ ...formData, cookies: { ...formData.cookies, sessionid_ss: formData.cookies?.sessionid_ss || '', tt_target_idc: e.target.value } })} />
-                      </div>
-                    </form>
-                    {chatAuthToggle('m-chat_authenticated')}
-                  </CardBody>
-                </Card>
-              )}
-              {tab.id === 'telegram' && (
-                <Card id="settings-telegram">
-                  <CardHeader>
-                    <CardTitle>Telegram Integration</CardTitle>
-                    <CardDescription>
-                      Upload recordings to Telegram automatically.{' '}
-                      <a href="https://github.com/Michele0303/tiktok-live-recorder/blob/main/docs/GUIDE.md#how-to-enable-upload-to-telegram" target="_blank" rel="noopener noreferrer" className="text-primary-ink hover:underline inline-flex items-center gap-1">
-                        Learn how <ExternalLink className="h-3 w-3" />
-                      </a>
-                    </CardDescription>
-                  </CardHeader>
-                  <CardBody className="space-y-4">
-                    <form autoComplete="off" onSubmit={(e) => e.preventDefault()}>
-                      <div className="grid gap-2">
-                        <Label htmlFor="m-api_id">API ID</Label>
-                        <Input id="m-api_id" placeholder="Enter your Telegram API ID" autoComplete="off" value={formData.telegram?.api_id || ''} onChange={(e) => setFormData({ ...formData, telegram: { ...formData.telegram, api_id: e.target.value, api_hash: formData.telegram?.api_hash || '', chat_id: formData.telegram?.chat_id || 'me' } })} />
-                      </div>
-                    </form>
-                    <form autoComplete="off" onSubmit={(e) => e.preventDefault()}>
-                      <div className="grid gap-2">
-                        <Label htmlFor="m-api_hash">API Hash</Label>
-                        <Input id="m-api_hash" name="api_hash" type="password" autoComplete="off" placeholder="Enter your Telegram API Hash" value={formData.telegram?.api_hash || ''} onChange={(e) => setFormData({ ...formData, telegram: { ...formData.telegram, api_id: formData.telegram?.api_id || '', api_hash: e.target.value, chat_id: formData.telegram?.chat_id || 'me' } })} />
-                      </div>
-                    </form>
-                    <form autoComplete="off" onSubmit={(e) => e.preventDefault()}>
-                      <div className="grid gap-2">
-                        <Label htmlFor="m-chat_id">Chat ID</Label>
-                        <Input id="m-chat_id" placeholder="me" autoComplete="off" value={formData.telegram?.chat_id || ''} onChange={(e) => setFormData({ ...formData, telegram: { ...formData.telegram, api_id: formData.telegram?.api_id || '', api_hash: formData.telegram?.api_hash || '', chat_id: e.target.value } })} />
-                      </div>
-                    </form>
-                  </CardBody>
-                </Card>
-              )}
-              {tab.id === 'recording' && (
-                <Card id="settings-recording">
-                  <CardHeader>
-                    <CardTitle>Recording Settings</CardTitle>
-                    <CardDescription>Configure default recording behavior</CardDescription>
-                  </CardHeader>
-                  <CardBody className="space-y-4">
-                    <div className="grid gap-2">
-                      <Label htmlFor="m-proxy">HTTP Proxy</Label>
-                      <Input id="m-proxy" placeholder="http://127.0.0.1:8080" value={formData.proxy || ''} onChange={(e) => setFormData({ ...formData, proxy: e.target.value || null })} />
-                      <p className="text-xs text-muted-foreground">Use a proxy to bypass regional restrictions</p>
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="m-bitrate">Default Bitrate</Label>
-                      <Input id="m-bitrate" placeholder="e.g., 1M, 1000k (leave empty for original)" value={formData.default_bitrate || ''} onChange={(e) => setFormData({ ...formData, default_bitrate: e.target.value || null })} />
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="m-interval">Automatic Check Interval (minutes)</Label>
-                      <Input id="m-interval" type="number" min="1" placeholder="5" value={formData.automatic_interval || 5} onChange={(e) => setFormData({ ...formData, automatic_interval: parseInt(e.target.value) || 5 })} />
-                    </div>
-                  </CardBody>
-                </Card>
-              )}
-              {tab.id === 'cleanup' && (
-                <Card id="settings-cleanup">
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2"><Trash2 className="h-5 w-5" /> Auto-Cleanup</CardTitle>
-                    <CardDescription>Automatically clean up old recordings to save disk space</CardDescription>
-                  </CardHeader>
-                  <CardBody className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <Label>Enable Auto-Cleanup</Label>
-                        <p className="text-xs text-muted-foreground">Automatically process old recordings</p>
-                      </div>
-                      <Switch checked={formData.auto_cleanup?.enabled || false} onCheckedChange={() => setFormData({ ...formData, auto_cleanup: { ...formData.auto_cleanup, enabled: !formData.auto_cleanup?.enabled, days: formData.auto_cleanup?.days || 7, action: formData.auto_cleanup?.action || 'delete' } })} />
-                    </div>
-                    {formData.auto_cleanup?.enabled && (
-                      <>
-                        <div className="grid gap-2">
-                          <Label>Retention Period</Label>
-                          <Select value={String(formData.auto_cleanup?.days || 7)} onValueChange={(v) => setFormData({ ...formData, auto_cleanup: { ...formData.auto_cleanup, enabled: formData.auto_cleanup?.enabled || false, days: parseInt(String(v)), action: formData.auto_cleanup?.action || 'delete' } })}>
-                            <SelectTrigger><SelectValue /></SelectTrigger>
-                            <SelectPopup>
-                              <SelectList>
-                                <SelectItem value="1">1 day</SelectItem>
-                                <SelectItem value="3">3 days</SelectItem>
-                                <SelectItem value="7">7 days</SelectItem>
-                                <SelectItem value="14">14 days</SelectItem>
-                                <SelectItem value="30">30 days</SelectItem>
-                              </SelectList>
-                            </SelectPopup>
-                          </Select>
-                        </div>
-                        <div className="grid gap-2">
-                          <Label>Cleanup Action</Label>
-                          <div className="flex gap-4">
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input type="radio" name="m-cleanup_action" value="delete" checked={formData.auto_cleanup?.action === 'delete'} onChange={() => setFormData({ ...formData, auto_cleanup: { ...formData.auto_cleanup, enabled: formData.auto_cleanup?.enabled || false, days: formData.auto_cleanup?.days || 7, action: 'delete' } })} className="h-4 w-4" />
-                              <Trash2 className="h-4 w-4" />
-                              <span className="text-sm">Delete permanently</span>
-                            </label>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                              <input type="radio" name="m-cleanup_action" value="compress" checked={formData.auto_cleanup?.action === 'compress'} onChange={() => setFormData({ ...formData, auto_cleanup: { ...formData.auto_cleanup, enabled: formData.auto_cleanup?.enabled || false, days: formData.auto_cleanup?.days || 7, action: 'compress' } })} className="h-4 w-4" />
-                              <Archive className="h-4 w-4" />
-                              <span className="text-sm">Compress to backup</span>
-                            </label>
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </CardBody>
-                </Card>
-              )}
-              {tab.id === 'timezone' && (
-                <Card id="settings-timezone">
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2"><Globe className="h-5 w-5" /> Display Timezone</CardTitle>
-                    <CardDescription>All timestamps shown in the app will use this timezone</CardDescription>
-                  </CardHeader>
-                  <CardBody className="space-y-4">
-                    <div className="grid gap-2">
-                      <Label htmlFor="m-timezone">Timezone</Label>
-                      <select id="m-timezone" className="flex h-10 w-full rounded-md border border-input-border bg-background px-3 py-2 text-sm" value={formData.timezone || 'UTC'} onChange={(e) => setFormData({ ...formData, timezone: e.target.value })}>
-                        <optgroup label="UTC"><option value="UTC">UTC</option></optgroup>
-                        <optgroup label="Americas">
-                          <option value="America/New_York">Eastern Time — New York (ET)</option>
-                          <option value="America/Chicago">Central Time — Chicago (CT)</option>
-                          <option value="America/Denver">Mountain Time — Denver (MT)</option>
-                          <option value="America/Phoenix">Mountain Time — Phoenix (no DST)</option>
-                          <option value="America/Los_Angeles">Pacific Time — Los Angeles (PT)</option>
-                          <option value="America/Anchorage">Alaska Time — Anchorage</option>
-                          <option value="Pacific/Honolulu">Hawaii Time — Honolulu</option>
-                          <option value="America/Toronto">Eastern Time — Toronto</option>
-                          <option value="America/Vancouver">Pacific Time — Vancouver</option>
-                          <option value="America/Sao_Paulo">Brasília Time — São Paulo</option>
-                          <option value="America/Argentina/Buenos_Aires">Argentina — Buenos Aires</option>
-                          <option value="America/Mexico_City">Central Time — Mexico City</option>
-                        </optgroup>
-                        <optgroup label="Europe">
-                          <option value="Europe/London">GMT/BST — London</option>
-                          <option value="Europe/Paris">CET/CEST — Paris</option>
-                          <option value="Europe/Berlin">CET/CEST — Berlin</option>
-                          <option value="Europe/Madrid">CET/CEST — Madrid</option>
-                          <option value="Europe/Rome">CET/CEST — Rome</option>
-                          <option value="Europe/Amsterdam">CET/CEST — Amsterdam</option>
-                          <option value="Europe/Brussels">CET/CEST — Brussels</option>
-                          <option value="Europe/Vienna">CET/CEST — Vienna</option>
-                          <option value="Europe/Warsaw">CET/CEST — Warsaw</option>
-                          <option value="Europe/Stockholm">CET/CEST — Stockholm</option>
-                          <option value="Europe/Helsinki">EET/EEST — Helsinki</option>
-                          <option value="Europe/Athens">EET/EEST — Athens</option>
-                          <option value="Europe/Bucharest">EET/EEST — Bucharest</option>
-                          <option value="Europe/Kiev">EET/EEST — Kyiv</option>
-                          <option value="Europe/Moscow">MSK — Moscow</option>
-                          <option value="Europe/Istanbul">TRT — Istanbul</option>
-                        </optgroup>
-                        <optgroup label="Asia &amp; Pacific">
-                          <option value="Asia/Dubai">GST — Dubai</option>
-                          <option value="Asia/Kolkata">IST — India</option>
-                          <option value="Asia/Dhaka">BST — Dhaka</option>
-                          <option value="Asia/Bangkok">ICT — Bangkok</option>
-                          <option value="Asia/Singapore">SGT — Singapore</option>
-                          <option value="Asia/Shanghai">CST — China</option>
-                          <option value="Asia/Tokyo">JST — Japan</option>
-                          <option value="Asia/Seoul">KST — Seoul</option>
-                          <option value="Asia/Jakarta">WIB — Jakarta</option>
-                          <option value="Asia/Karachi">PKT — Karachi</option>
-                          <option value="Asia/Riyadh">AST — Riyadh</option>
-                          <option value="Australia/Sydney">AEDT/AEST — Sydney</option>
-                          <option value="Australia/Melbourne">AEDT/AEST — Melbourne</option>
-                          <option value="Australia/Perth">AWST — Perth</option>
-                          <option value="Pacific/Auckland">NZDT/NZST — Auckland</option>
-                        </optgroup>
-                        <optgroup label="Africa">
-                          <option value="Africa/Cairo">EET — Cairo</option>
-                          <option value="Africa/Johannesburg">SAST — Johannesburg</option>
-                          <option value="Africa/Lagos">WAT — Lagos</option>
-                          <option value="Africa/Nairobi">EAT — Nairobi</option>
-                        </optgroup>
-                      </select>
-                    </div>
-                    <div className="p-3 rounded-lg bg-secondary text-sm">
-                      <span className="text-muted-foreground">Current time in selected zone: </span>
-                      <span className="font-medium tabular-nums">
-                        {new Date().toLocaleString('en-US', {
-                          timeZone: formData.timezone || 'UTC',
-                          month: 'short',
-                          day: 'numeric',
-                          year: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          second: '2-digit',
-                        })}
-                      </span>
-                    </div>
-                  </CardBody>
-                </Card>
-              )}
-              {tab.id === 'appearance' && (
-                <Card id="settings-appearance">
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Palette className="h-5 w-5" />
-                      Appearance
-                    </CardTitle>
-                    <CardDescription>Choose your preferred theme and accent color</CardDescription>
-                  </CardHeader>
-                  <CardBody className="space-y-5">
-                    <ThemeOptions />
-                    <div className="border-t border-border pt-5">
-                      <AccentPicker />
-                    </div>
-                  </CardBody>
-                </Card>
-              )}
+              {tab.render('m-')}
             </TabsPanel>
           ))}
         </Tabs>
