@@ -1,0 +1,322 @@
+/*
+ * TikRec themes: Light, Dark (grey) and Darker (black).
+ *
+ * Structure
+ *   1. Primitives: one cool-neutral ramp and the status hues. Neutral steps
+ *      are named by OKLCH lightness x1000 (--n-970 is L 0.97), so a value's
+ *      brightness is readable from its name.
+ *   2. Themes map primitives onto the semantic roles the components use.
+ *      Selectors are attribute-scoped, not :root-only, so any element can
+ *      carry data-theme (the Settings previews render real themes this way).
+ *
+ * Rules
+ *   - Text roles (--foreground, --muted, --dimmed, status colours, every
+ *     *-foreground) must pass WCAG AA 4.5:1 on the surfaces they sit on.
+ *   - scripts/check-contrast.mjs parses this file and fails the build if a
+ *     pair regresses. Run `npm run check:contrast` after editing.
+ *   - Accent overrides are computed in src/lib/color.mjs; THEME_SURFACES there
+ *     must match the card/background values below.
+ */
+
+:root {
+  /* Neutral ramp (hue 248, chroma rising gently as it darkens) */
+  --n-1000: oklch(1 0 0);
+  --n-985: oklch(0.985 0.002 248);
+  --n-970: oklch(0.97 0.003 248);
+  --n-960: oklch(0.96 0.003 248);
+  --n-940: oklch(0.94 0.003 248);
+  --n-905: oklch(0.905 0.004 248);
+  --n-860: oklch(0.86 0.005 248);
+  --n-800: oklch(0.8 0.006 248);
+  --n-780: oklch(0.78 0.006 248);
+  --n-700: oklch(0.7 0.008 248);
+  --n-680: oklch(0.68 0.008 248);
+  --n-545: oklch(0.545 0.01 248);
+  --n-460: oklch(0.46 0.01 248);
+  --n-430: oklch(0.43 0.008 248);
+  --n-370: oklch(0.37 0.007 248);
+  --n-330: oklch(0.33 0.007 248);
+  --n-355: oklch(0.355 0.007 248);
+  --n-310: oklch(0.31 0.006 248);
+  --n-285: oklch(0.285 0.006 248);
+  --n-265: oklch(0.265 0.006 248);
+  --n-260: oklch(0.26 0.005 248);
+  --n-235: oklch(0.235 0.005 248);
+  --n-220: oklch(0.22 0.005 248);
+  --n-210: oklch(0.21 0.004 248);
+  --n-205: oklch(0.205 0.005 248);
+  --n-195: oklch(0.195 0.004 248);
+  --n-180: oklch(0.18 0.004 248);
+  --n-155: oklch(0.155 0.004 248);
+  --n-0: oklch(0 0 0);
+
+  /* Labels placed on coloured fills (see LIGHT_LABEL/DARK_LABEL in color.mjs) */
+  --label-light: var(--n-985);
+  --label-dark: var(--n-180);
+}
+
+/* ------------------------------------------------------------------ Light */
+
+:root,
+[data-theme='light'] {
+  color-scheme: light;
+
+  --background: var(--n-970);
+  --foreground: var(--n-210);
+  --muted: var(--n-460);
+  --dimmed: var(--n-545);
+  --accent: var(--n-940);
+
+  --border: var(--n-905);
+  --separator: var(--n-905);
+  --scrollbar: var(--n-800);
+  --track: var(--n-905);
+  --code: var(--n-985);
+
+  --card: var(--n-1000);
+  --card-border: var(--n-905);
+  --card-separator: var(--n-940);
+  --card-footer: var(--n-985);
+  --card-shadow: 0 1px 2px rgb(15 23 42 / 0.04), 0 4px 12px -4px rgb(15 23 42 / 0.06);
+  --item: var(--n-1000);
+  --item-border: var(--n-905);
+
+  --input: var(--n-1000);
+  --input-border: var(--n-800);
+  --input-accent-border: var(--n-700);
+  --input-shadow: 0 1px 2px rgb(15 23 42 / 0.06);
+
+  --popover: var(--n-1000);
+  --popover-border: var(--n-905);
+  --popover-separator: var(--n-940);
+  --popover-accent: var(--n-960);
+  --popover-shadow: 0 20px 25px -5px rgb(15 23 42 / 0.1), 0 8px 10px -6px rgb(15 23 42 / 0.08);
+  --dialog: var(--n-1000);
+  --dialog-border: var(--n-905);
+  --dialog-footer: var(--n-985);
+  --drawer: var(--n-1000);
+  --drawer-border: var(--n-905);
+  --drawer-footer: var(--n-985);
+  --toast: var(--n-1000);
+  --toast-border: var(--n-905);
+
+  --table: transparent;
+  --table-separator: var(--n-940);
+  --table-head: var(--n-985);
+  --table-accent: var(--n-960);
+  --tabs: var(--n-940);
+  --tabs-border: var(--n-905);
+  --tabs-accent: var(--n-1000);
+  --chip: var(--n-960);
+  --chip-border: var(--n-905);
+  --avatar: var(--n-905);
+  --kbd: var(--n-940);
+  --kbd-border: var(--n-860);
+
+  --primary: oklch(0.55 0.2 263);
+  --primary-foreground: var(--label-light);
+  --primary-border: oklch(0.5 0.2 263);
+  --primary-ink: oklch(0.52 0.2 263);
+  --primary-subtle: color-mix(in oklab, var(--primary) 12%, transparent);
+
+  --secondary: var(--n-960);
+  --secondary-foreground: var(--foreground);
+  --secondary-border: var(--n-905);
+  --tertiary: var(--n-210);
+  --tertiary-foreground: var(--n-985);
+  --tertiary-border: var(--n-460);
+
+  --success: oklch(0.49 0.12 150);
+  --success-foreground: var(--label-light);
+  --success-border: oklch(0.43 0.11 150);
+  --warning: oklch(0.51 0.115 62);
+  --warning-foreground: var(--label-light);
+  --warning-border: oklch(0.45 0.105 62);
+  --danger: oklch(0.525 0.2 27);
+  --danger-foreground: var(--label-light);
+  --danger-border: oklch(0.47 0.19 27);
+  --info: oklch(0.505 0.135 250);
+  --info-foreground: var(--label-light);
+  --info-border: oklch(0.45 0.125 250);
+
+  /* Two-series chart colours, validated for colour-vision separation. */
+  --chart-1: #2a78d6;
+  --chart-2: #d0561f;
+
+  --shadow-subtle: 0 1px 2px rgb(15 23 42 / 0.05);
+  --shadow: 0 3px 4px -1px rgb(15 23 42 / 0.06);
+}
+
+/* ------------------------------------------------- Dark + Darker (shared) */
+
+[data-theme='dark'],
+[data-theme='darker'] {
+  color-scheme: dark;
+
+  --primary: oklch(0.55 0.2 263);
+  --primary-foreground: var(--label-light);
+  --primary-border: oklch(0.5 0.2 263);
+  --primary-ink: oklch(0.72 0.16 263);
+  --primary-subtle: color-mix(in oklab, var(--primary) 24%, transparent);
+
+  /* Bright status colours read as text on dark surfaces; their solid fills
+     therefore take a dark label. */
+  --success: oklch(0.76 0.15 150);
+  --success-foreground: var(--label-dark);
+  --success-border: oklch(0.66 0.14 150);
+  --warning: oklch(0.8 0.14 78);
+  --warning-foreground: var(--label-dark);
+  --warning-border: oklch(0.7 0.13 78);
+  --danger: oklch(0.72 0.17 27);
+  --danger-foreground: var(--label-dark);
+  --danger-border: oklch(0.62 0.17 27);
+  --info: oklch(0.75 0.12 250);
+  --info-foreground: var(--label-dark);
+  --info-border: oklch(0.65 0.12 250);
+
+  --tertiary: var(--n-960);
+  --tertiary-foreground: var(--n-180);
+
+  --chart-1: #4a93ea;
+  --chart-2: #e8733f;
+
+  --table: transparent;
+  --shadow-subtle: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow: 0 3px 4px rgb(0 0 0 / 0.2);
+  --input-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+}
+
+/* ------------------------------------------------------------------- Dark */
+
+[data-theme='dark'] {
+  --background: var(--n-220);
+  --foreground: oklch(0.97 0.002 248);
+  --muted: var(--n-800);
+  --dimmed: var(--n-700);
+  --accent: var(--n-310);
+
+  --border: var(--n-355);
+  --separator: var(--n-310);
+  --scrollbar: var(--n-430);
+  --track: var(--n-310);
+  --code: var(--n-260);
+
+  --card: var(--n-260);
+  --card-border: var(--n-310);
+  --card-separator: var(--n-310);
+  --card-footer: var(--n-235);
+  --card-shadow: 0 8px 16px -8px rgb(0 0 0 / 0.35);
+  --item: var(--n-260);
+  --item-border: var(--n-310);
+
+  --input: var(--n-235);
+  --input-border: var(--n-430);
+  --input-accent-border: var(--n-545);
+
+  --popover: var(--n-310);
+  --popover-border: var(--n-370);
+  --popover-separator: var(--n-370);
+  --popover-accent: var(--n-370);
+  --popover-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.5);
+  --dialog: var(--n-260);
+  --dialog-border: var(--n-355);
+  --dialog-footer: var(--n-235);
+  --drawer: var(--n-260);
+  --drawer-border: var(--n-355);
+  --drawer-footer: var(--n-235);
+  --toast: var(--n-310);
+  --toast-border: var(--n-370);
+
+  --table-separator: var(--n-310);
+  --table-head: var(--n-235);
+  --table-accent: var(--n-285);
+  --tabs: var(--n-285);
+  --tabs-border: var(--n-260);
+  --tabs-accent: var(--n-370);
+  --chip: var(--n-355);
+  --chip-border: var(--n-430);
+  --avatar: var(--n-355);
+  --kbd: var(--n-370);
+  --kbd-border: var(--n-460);
+
+  --secondary: var(--n-310);
+  --secondary-foreground: var(--foreground);
+  --secondary-border: var(--n-370);
+  --tertiary-border: var(--n-545);
+}
+
+/* ----------------------------------------------------------------- Darker */
+
+[data-theme='darker'] {
+  --background: var(--n-0);
+  --foreground: oklch(0.96 0.002 248);
+  --muted: var(--n-780);
+  --dimmed: var(--n-680);
+  --accent: var(--n-235);
+
+  --border: var(--n-265);
+  --separator: var(--n-235);
+  --scrollbar: var(--n-370);
+  --track: var(--n-235);
+  --code: var(--n-155);
+
+  --card: var(--n-155);
+  --card-border: var(--n-235);
+  --card-separator: var(--n-235);
+  --card-footer: var(--n-155);
+  --card-shadow: 0 0 0 1px rgb(255 255 255 / 0.02);
+  --item: var(--n-155);
+  --item-border: var(--n-235);
+
+  --input: var(--n-0);
+  --input-border: var(--n-370);
+  --input-accent-border: var(--n-460);
+
+  --popover: var(--n-205);
+  --popover-border: var(--n-285);
+  --popover-separator: var(--n-285);
+  --popover-accent: var(--n-285);
+  --popover-shadow: 0 16px 40px -12px rgb(0 0 0 / 0.8);
+  --dialog: var(--n-155);
+  --dialog-border: var(--n-265);
+  --dialog-footer: var(--n-155);
+  --drawer: var(--n-155);
+  --drawer-border: var(--n-265);
+  --drawer-footer: var(--n-155);
+  --toast: var(--n-205);
+  --toast-border: var(--n-285);
+
+  --table-separator: var(--n-235);
+  --table-head: var(--n-155);
+  --table-accent: var(--n-205);
+  --tabs: var(--n-205);
+  --tabs-border: var(--n-155);
+  --tabs-accent: var(--n-285);
+  --chip: var(--n-265);
+  --chip-border: var(--n-370);
+  --avatar: var(--n-265);
+  --kbd: var(--n-285);
+  --kbd-border: var(--n-430);
+
+  --secondary: var(--n-205);
+  --secondary-foreground: var(--foreground);
+  --secondary-border: var(--n-285);
+  --tertiary-border: var(--n-460);
+}
+
+/* ---------------------------------------------------- Derived (all themes) */
+
+:root,
+[data-theme] {
+  --muted-foreground: var(--muted);
+  --destructive: var(--danger);
+  --destructive-foreground: var(--danger-foreground);
+  --avatar-foreground: var(--foreground);
+  --popover-foreground: var(--foreground);
+  --dialog-foreground: var(--foreground);
+  --drawer-foreground: var(--foreground);
+  --toast-foreground: var(--foreground);
+  --table-foreground: var(--foreground);
+  --tabs-foreground: var(--foreground);
+  --kbd-foreground: var(--foreground);
+}

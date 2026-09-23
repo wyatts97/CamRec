@@ -1,0 +1,22 @@
+tiktok-live-recorder
+node_modules
+.omo
+.agents
+skills-lock.json
+.windsurf
+# Local SQLite database — contains per-deployment state
+data/tikrec.db
+# Runtime secrets and per-deployment state.
+# auth.json holds the login password hash and the session signing secret;
+# cookies.json holds a live TikTok session token.
+data/auth.json
+data/cookies.json
+data/telegram.json
+data/settings.json
+data/backups/
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/

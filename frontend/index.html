@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='45' fill='%23ef4444'/%3E%3C/svg%3E" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TikRec WebUI</title>
+    <meta name="theme-color" content="#f3f5f7" />
+    <!--
+      Applied before first paint so the page never flashes the wrong theme.
+      Mirrors readStoredTheme/applyTheme in src/hooks/useTheme.tsx -- keep the
+      two in sync. The accent CSS is cached by applyAccent(), so the colour
+      maths lives only in src/lib/color.mjs.
+    -->
+    <script>
+      (function () {
+        try {
+          var root = document.documentElement
+          var colors = { light: '#f3f5f7', dark: '#191b1d', darker: '#000000' }
+          var choice = localStorage.getItem('tikrec-theme')
+          if (choice === 'neo-futurism') choice = 'darker'
+          if (choice !== 'light' && choice !== 'dark' && choice !== 'darker') choice = 'system'
+          var theme = choice === 'system'
+            ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+            : choice
+          root.setAttribute('data-theme', theme)
+          if (theme !== 'light') root.classList.add('dark')
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', colors[theme])
+
+          var accentCss = localStorage.getItem('tikrec-accent-css')
+          if (accentCss) {
+            var style = document.createElement('style')
+            style.id = 'tikrec-accent'
+            style.textContent = accentCss
+            document.head.appendChild(style)
+          }
+        } catch (e) {
+          /* Private mode / disabled storage: fall through to the light theme. */
+        }
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

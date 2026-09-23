@@ -1,0 +1,198 @@
+@import 'tailwindcss';
+@import './styles/themes.css';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --radius: 0.75rem;
+  --radius-xs: 5px;
+  --radius-sm: calc(var(--radius) - 0.25rem);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 0.25rem);
+  --radius-xl: calc(var(--radius) + 0.5rem);
+
+  --spinner-light: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cg clip-path='url(%23clip0_339_178)'%3E%3Cpath d='M22 12.0005C21.9999 14.1123 21.3313 16.1698 20.0899 17.8782C18.8486 19.5866 17.0983 20.8582 15.0899 21.5107C13.0814 22.1632 10.918 22.1631 8.9096 21.5105C6.90121 20.8579 5.15098 19.5862 3.90974 17.8777C2.6685 16.1693 1.99998 14.1117 2 11.9999C2.00002 9.88816 2.66856 7.83061 3.90982 6.12216C5.15109 4.4137 6.90134 3.14205 8.90974 2.48946C10.9181 1.83687 13.0816 1.83684 15.09 2.48938' stroke='%23F7F7F8' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/g%3E%3Cdefs%3E%3CclipPath id='clip0_339_178'%3E%3Crect width='24' height='24' fill='white'/%3E%3C/clipPath%3E%3C/defs%3E%3C/svg%3E%0A");
+  --spinner-dark: url("data:image/svg+xml,%3Csvg width='100' height='100' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cg clip-path='url(%23clip0_339_178)'%3E%3Cpath d='M22 12.0005C21.9999 14.1123 21.3313 16.1698 20.0899 17.8782C18.8486 19.5866 17.0983 20.8582 15.0899 21.5107C13.0814 22.1632 10.918 22.1631 8.9096 21.5105C6.90121 20.8579 5.15098 19.5862 3.90974 17.8777C2.6685 16.1693 1.99998 14.1117 2 11.9999C2.00002 9.88816 2.66856 7.83061 3.90982 6.12216C5.15109 4.4137 6.90134 3.14205 8.90974 2.48946C10.9181 1.83687 13.0816 1.83684 15.09 2.48938' stroke='%23161718' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/g%3E%3Cdefs%3E%3CclipPath id='clip0_339_178'%3E%3Crect width='24' height='24' fill='white'/%3E%3C/clipPath%3E%3C/defs%3E%3C/svg%3E%0A");
+  --chevron-right: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 18 6-6-6-6'/%3E%3C/svg%3E");
+  --chevron-right-dark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 18 6-6-6-6'/%3E%3C/svg%3E");
+  --chevron-down: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  --chevron-down-dark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+@theme inline {
+  --font-sans:
+    'IBM Plex Sans', 'Inter', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji',
+    'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --font-mono:
+    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-border: var(--primary-border);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary-border: var(--secondary-border);
+  --color-danger: var(--danger);
+  --color-danger-foreground: var(--danger-foreground);
+  --color-danger-border: var(--danger-border);
+  --color-tertiary: var(--tertiary);
+  --color-tertiary-foreground: var(--tertiary-foreground);
+  --color-tertiary-border: var(--tertiary-border);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-info-border: var(--info-border);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-success-border: var(--success-border);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-border: var(--warning-border);
+  --color-avatar: var(--avatar);
+  --color-avatar-foreground: var(--avatar-foreground);
+  --color-card: var(--card);
+  --color-card-border: var(--card-border);
+  --color-card-separator: var(--card-separator);
+  --color-card-footer: var(--card-footer);
+  --color-item: var(--item);
+  --color-item-border: var(--item-border);
+  --color-input: var(--input);
+  --color-input-foreground: var(--foreground);
+  --color-input-border: var(--input-border);
+  --color-input-accent-border: var(--input-accent-border);
+  --color-track: var(--track);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover-border: var(--popover-border);
+  --color-popover-separator: var(--popover-separator);
+  --color-popover-accent: var(--popover-accent);
+  --color-kbd: var(--kbd);
+  --color-kbd-foreground: var(--kbd-foreground);
+  --color-kbd-border: var(--kbd-border);
+  --color-dialog: var(--dialog);
+  --color-dialog-foreground: var(--dialog-foreground);
+  --color-dialog-border: var(--dialog-border);
+  --color-dialog-footer: var(--dialog-footer);
+  --color-drawer: var(--drawer);
+  --color-drawer-foreground: var(--drawer-foreground);
+  --color-drawer-border: var(--drawer-border);
+  --color-drawer-footer: var(--drawer-footer);
+  --color-tabs: var(--tabs);
+  --color-tabs-foreground: var(--tabs-foreground);
+  --color-tabs-border: var(--tabs-border);
+  --color-tabs-accent: var(--tabs-accent);
+  --color-toast: var(--toast);
+  --color-toast-foreground: var(--toast-foreground);
+  --color-toast-border: var(--toast-border);
+  --color-table: var(--table);
+  --color-table-foreground: var(--table-foreground);
+  --color-table-separator: var(--table-separator);
+  --color-table-head: var(--table-head);
+  --color-table-accent: var(--table-accent);
+  --color-chip: var(--chip);
+  --color-chip-border: var(--chip-border);
+  --color-muted: var(--muted);
+  --color-dimmed: var(--dimmed);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-primary-subtle: var(--primary-subtle);
+  --color-primary-ink: var(--primary-ink);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-separator: var(--separator);
+  --color-accent: var(--accent);
+  --color-border: var(--border);
+  --color-scrollbar: var(--scrollbar);
+  --color-code: var(--code);
+
+  --radius: var(--radius);
+  --radius-xs: var(--radius-xs);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --shadow: var(--shadow);
+  --shadow-card: var(--card-shadow);
+  --shadow-input: var(--input-shadow);
+  --shadow-popover: var(--popover-shadow);
+  --shadow-subtle: var(--shadow-subtle);
+
+  --text-xs: 0.75rem;
+  --text-xs--line-height: calc(1 / 0.75);
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: calc(1.25 / 0.8125);
+  --text-base: 0.875rem;
+  --text-base--line-height: calc(1.25 / 0.875);
+  --text-lg: 1rem;
+  --text-xl: 1.125rem;
+  --text-2xl: 1.25rem;
+  --text-3xl: 1.5rem;
+  --text-4xl: 1.875rem;
+  --text-5xl: 2.25rem;
+  --text-6xl: 3rem;
+  --text-7xl: 3.75rem;
+  --text-8xl: 4.5rem;
+  --text-9xl: 6rem;
+}
+
+@utility bg-spinner {
+  background-image: var(--spinner-light);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+}
+
+@utility bg-spinner-dark {
+  background-image: var(--spinner-dark);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+}
+
+@utility bg-chevron-right {
+  background-image: var(--chevron-right);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+}
+
+@utility bg-chevron-right-dark {
+  background-image: var(--chevron-right-dark);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+}
+
+@utility bg-chevron-down {
+  background-image: var(--chevron-down);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+}
+
+@utility bg-chevron-down-dark {
+  background-image: var(--chevron-down-dark);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+}
+
+@layer base {
+  .root {
+    isolation: isolate;
+  }
+  * {
+    border-color: var(--border);
+  }
+  body {
+    @apply text-base bg-background text-foreground font-sans;
+  }
+}
+
+/* Hide horizontal scrollbar on react-data-table-component wrappers */
+.rdt_TableWrapper {
+  overflow-x: hidden !important;
+}

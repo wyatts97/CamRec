@@ -1,0 +1,52 @@
+{
+  "name": "tikrec-webui",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && node scripts/check-contrast.mjs && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "check:contrast": "node scripts/check-contrast.mjs"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.5.0",
+    "@swc/helpers": "^0.5.23",
+    "@tailwindcss/vite": "^4.3.0",
+    "@tanstack/react-query": "^5.62.0",
+    "@tanstack/react-virtual": "^3.14.10",
+    "@vidstack/react": "^1.12.12",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "framer-motion": "^12.40.0",
+    "hls.js": "^1.6.16",
+    "lucide-react": "^0.468.0",
+    "mpegts.js": "^1.8.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-hot-toast": "^2.6.0",
+    "react-router-dom": "^7.0.2",
+    "recharts": "^2.15.4",
+    "tailwind-merge": "^2.6.1",
+    "tailwindcss": "^4.3.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^22.10.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^9.15.0",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.26",
+    "globals": "^15.15.0",
+    "typescript": "~5.6.2",
+    "typescript-eslint": "^8.68.0",
+    "vite": "^6.0.1",
+    "vite-imagetools": "^7.0.5",
+    "vite-plugin-compression": "^0.5.1"
+  }
+}

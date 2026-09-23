@@ -1,0 +1,11 @@
+{
+  "framework": "react",
+  "paths": {
+    "components": "src/components/selia",
+    "utils": "src/lib/utils.ts"
+  },
+  "imports": {
+    "components": "components/selia",
+    "utils": "lib/utils"
+  }
+}
