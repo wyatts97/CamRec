@@ -76,9 +76,12 @@ export function SelectTrigger({
 export function SelectValue({
   className,
   placeholder = 'Select an option',
+  format,
   ...props
 }: React.ComponentProps<typeof BaseSelect.Value> & {
   placeholder?: string;
+  /** Map a plain string value to its display label. */
+  format?: (value: string) => React.ReactNode;
 }) {
   return (
     <BaseSelect.Value
@@ -86,9 +89,13 @@ export function SelectValue({
       className={cn(className)}
       {...props}
     >
-      {(value: string | SelectItem | null) => (
-        <SelectRenderValue value={value} placeholder={placeholder} />
-      )}
+      {(value: string | SelectItem | null) =>
+        format && typeof value === 'string' ? (
+          <span className="text-popover-foreground select-none">{format(value)}</span>
+        ) : (
+          <SelectRenderValue value={value} placeholder={placeholder} />
+        )
+      }
     </BaseSelect.Value>
   );
 }

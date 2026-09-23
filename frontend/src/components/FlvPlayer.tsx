@@ -85,13 +85,15 @@ export default function FlvPlayer({
 
   const setupHls = useCallback(
     (video: HTMLVideoElement, url: string) => {
-      if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        // Safari / iOS native HLS support
-        video.src = url
-        return
-      }
-
+      // Prefer hls.js wherever MSE exists: its retry/recovery handling is far
+      // better for live streams than native players (and recent Chrome now
+      // claims native HLS support, which used to route around hls.js).
       if (!Hls.isSupported()) {
+        if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          // iOS Safari: no MSE, native HLS only.
+          video.src = url
+          return
+        }
         handleFatalError()
         return
       }
@@ -167,7 +169,9 @@ export default function FlvPlayer({
     destroyPlayer()
 
     const video = videoRef.current
-    video.src = ''
+    // removeAttribute, not `src = ''`: an empty src resolves to the page URL
+    // and fires an error event, which tore the player down before it started.
+    video.removeAttribute('src')
     video.load()
 
     if (streamType === 'hls') {
@@ -215,7 +219,13 @@ export default function FlvPlayer({
         onWaiting={() => setBuffering(true)}
         onPlaying={() => setBuffering(false)}
         onCanPlay={handleCanPlay}
-        onError={handleFatalError}
+        onError={() => {
+          // hls.js / mpegts report (and recover from) their own errors; the
+          // element's error event only matters for native playback.
+          if (!hlsRef.current && !flvPlayerRef.current && videoRef.current?.getAttribute('src')) {
+            handleFatalError()
+          }
+        }}
       />
       {buffering && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/40 pointer-events-none">

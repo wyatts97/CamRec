@@ -37,6 +37,8 @@ const QUALITY_OPTIONS: { value: PreferredQuality; label: string }[] = [
   { value: '360', label: 'Up to 360p' },
 ]
 
+const RETENTION_OPTIONS = [1, 3, 7, 14, 30].map((d) => ({ value: String(d), label: d === 1 ? '1 day' : `${d} days` }))
+
 const TIMEZONES: { group: string; zones: [string, string][] }[] = [
   { group: 'UTC', zones: [['UTC', 'UTC']] },
   {
@@ -279,7 +281,7 @@ export default function SettingsPage() {
                 onValueChange={(v) => setFormData({ ...formData, preferred_quality: v as PreferredQuality })}
               >
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue format={(v) => QUALITY_OPTIONS.find((q) => q.value === v)?.label ?? v} />
                 </SelectTrigger>
                 <SelectPopup>
                   <SelectList>
@@ -349,7 +351,7 @@ export default function SettingsPage() {
                   <Label>Retention Period</Label>
                   <Select value={String(cleanup.days)} onValueChange={(v) => setCleanup({ days: parseInt(String(v)) })}>
                     <SelectTrigger>
-                      <SelectValue />
+                      <SelectValue format={(v) => RETENTION_OPTIONS.find((o) => o.value === v)?.label ?? v} />
                     </SelectTrigger>
                     <SelectPopup>
                       <SelectList>
