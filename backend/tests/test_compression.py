@@ -113,6 +113,22 @@ def test_unfinished_recording_is_not_touched(db):
     assert path.read_bytes() == original_bytes
 
 
+def test_status_lists_queue_in_run_order(db, monkeypatch):
+    first, _ = _make_recording(db, seconds=2)
+    second, _ = _make_recording(db, seconds=2)
+    svc = cs.CompressionService()  # worker not started, so jobs stay queued
+    monkeypatch.setattr(cs, "get_config", lambda: {"enabled": True, "quality": "balanced"})
+
+    assert svc.enqueue(second) and svc.enqueue(first)
+    assert not svc.enqueue(first)  # no duplicates
+
+    st = svc.status()
+    assert st["queue_length"] == 2
+    assert [q["recording_id"] for q in st["queue"]] == [second, first]
+    assert st["queue"][0]["username"].startswith("compress-user-")
+    assert st["current"] is None
+
+
 def test_encode_command_caps_threads_and_uses_quality_crf():
     cmd = cs.build_encode_cmd(cs.Path("in.mp4"), cs.Path("out.mp4"), cs.QUALITY_CRF["balanced"], 6)
     assert "libsvtav1" in cmd and "libopus" in cmd

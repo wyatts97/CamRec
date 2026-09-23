@@ -21,6 +21,7 @@ import { formatBytes, formatDuration, cn } from '@/lib/utils'
 import { useDateFormat } from '@/lib/timezone-context'
 import { useConfirm } from '@/components/ConfirmDialog'
 import QueryError from '@/components/QueryError'
+import CompressionQueue from '@/components/CompressionQueue'
 import toast from 'react-hot-toast'
 
 export default function Storage() {
@@ -260,6 +261,8 @@ export default function Storage() {
             </span>
           </div>
         )}
+
+        <CompressionQueue />
 
         {/* Per-user breakdown */}
         <div className="rounded-xl border border-border bg-card overflow-hidden">

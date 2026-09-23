@@ -126,11 +126,35 @@ export interface CompressionConfig {
   quality: CompressionQuality
 }
 
+export interface CompressionQueueItem {
+  recording_id: number
+  filename: string
+  username: string | null
+  file_size: number | null
+  duration_seconds: number | null
+}
+
+export interface CompressionJob extends CompressionQueueItem {
+  /** 0..1 */
+  progress: number
+  started_at: string
+  elapsed_seconds: number
+  /** Media seconds encoded per wall-clock second (null for the first few seconds). */
+  speed: number | null
+  eta_seconds: number | null
+}
+
 export interface CompressionStatus extends CompressionConfig {
   available: boolean
   threads: number
+  /** Waiting jobs, excluding the one running. */
   queue_length: number
-  current: { recording_id: number; filename: string; progress: number; started_at: string } | null
+  /** Waiting jobs in the order they will run (capped at 100). */
+  queue: CompressionQueueItem[]
+  current: CompressionJob | null
+  speed: number | null
+  /** Rough time until the whole queue is done. */
+  eta_all_seconds: number | null
 }
 
 export interface RecordingListResponse {

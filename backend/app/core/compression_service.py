@@ -119,12 +119,18 @@ def build_encode_cmd(src: Path, dst: Path, crf: int, threads: int) -> list[str]:
 class CompressionService:
     def __init__(self) -> None:
         self._queue: "queue.Queue[int]" = queue.Queue()
+        # Every recording queued or running (for de-duplication)...
         self._queued: set[int] = set()
+        # ...and the waiting ones in the order they'll run.
+        self._order: list[int] = []
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._proc: subprocess.Popen | None = None
-        self._current: dict | None = None  # {recording_id, filename, progress, started_at}
+        self._current: dict | None = None  # see process()
+        # Media seconds encoded per wall-clock second on the last finished job,
+        # used to estimate how long the queue will take.
+        self._last_speed: float | None = None
 
     # ------------------------------------------------------------ lifecycle
     def start(self) -> None:
@@ -167,6 +173,7 @@ class CompressionService:
             if recording_id in self._queued:
                 return False
             self._queued.add(recording_id)
+            self._order.append(recording_id)
         with get_session() as db:
             rec = db.query(Recording).filter(Recording.id == recording_id).first()
             if rec and rec.compress_status not in ("done", "processing"):
@@ -188,18 +195,64 @@ class CompressionService:
             ]
         return sum(1 for rid in ids if self.enqueue(rid))
 
-    def status(self) -> dict:
+    def status(self, queue_limit: int = 100) -> dict:
+        """Config, the running job (with speed/ETA) and the waiting queue in run order."""
         cfg = get_config()
         with self._lock:
-            queued = len(self._queued)
-        current = dict(self._current) if self._current else None
+            order = list(self._order)
+        current = self._current_snapshot()
+        speed = (current or {}).get("speed") or self._last_speed
+
+        queue_items: list[dict] = []
+        if order:
+            with get_session() as db:
+                rows = {
+                    r.id: r for r in db.query(Recording).filter(Recording.id.in_(order[:queue_limit])).all()
+                }
+                for rid in order[:queue_limit]:
+                    r = rows.get(rid)
+                    if r is None:
+                        continue
+                    queue_items.append({
+                        "recording_id": r.id,
+                        "filename": r.filename,
+                        "username": r.user.username if r.user else None,
+                        "file_size": r.file_size,
+                        "duration_seconds": r.duration_seconds,
+                    })
+
+        queue_media_seconds = sum(q["duration_seconds"] or 0 for q in queue_items)
+        remaining = (current or {}).get("eta_seconds") or 0
+        eta_all = (remaining + queue_media_seconds / speed) if speed else None
         return {
             **cfg,
             "available": encoder_available(),
             "threads": default_threads(),
-            "queue_length": max(0, queued - (1 if current else 0)),
+            "queue_length": len(order),
+            "queue": queue_items,
             "current": current,
+            "speed": round(speed, 2) if speed else None,
+            "eta_all_seconds": int(eta_all) if eta_all is not None else None,
         }
+
+    def _current_snapshot(self) -> dict | None:
+        cur = self._current
+        if not cur:
+            return None
+        snap = {k: v for k, v in cur.items() if not k.startswith("_")}
+        elapsed = time.monotonic() - cur["_started"]
+        snap["elapsed_seconds"] = int(elapsed)
+        duration = cur.get("duration_seconds")
+        done = cur.get("progress", 0.0) * (duration or 0)
+        # Speed is only meaningful after a few seconds of encoding.
+        if duration and elapsed > 5 and done > 0:
+            speed = done / elapsed
+            snap["speed"] = round(speed, 2)
+            snap["eta_seconds"] = int((duration - done) / speed)
+        else:
+            snap["speed"] = None
+            snap["eta_seconds"] = None
+        return snap
 
     # -------------------------------------------------------------- worker
     def _worker(self) -> None:
@@ -207,6 +260,9 @@ class CompressionService:
             rid = self._queue.get()
             if rid < 0 or self._stop.is_set():
                 break
+            with self._lock:
+                if rid in self._order:
+                    self._order.remove(rid)
             try:
                 self.process(rid)
             except Exception:
@@ -240,6 +296,7 @@ class CompressionService:
                 db.commit()
                 return "not_finished"
             filename = rec.filename
+            username = rec.user.username if rec.user else None
             rec.compress_status = "processing"
             db.commit()
 
@@ -257,8 +314,14 @@ class CompressionService:
         crf = QUALITY_CRF[get_config()["quality"]]
         threads = default_threads()
         self._current = {
-            "recording_id": rid, "filename": filename, "progress": 0.0,
+            "recording_id": rid,
+            "filename": filename,
+            "username": username,
+            "file_size": src_size,
+            "duration_seconds": src_duration,
+            "progress": 0.0,
             "started_at": datetime.utcnow().isoformat(),
+            "_started": time.monotonic(),
         }
         logger.info("Compressing recording %d (%s, %.1f MB) at CRF %d, %d cores",
                     rid, filename, src_size / 1e6, crf, threads)
@@ -305,6 +368,8 @@ class CompressionService:
 
         self._finish(rid, "done", original_size=src_size, file_size=new_size)
         elapsed = time.time() - started
+        if src_duration and elapsed > 0:
+            self._last_speed = src_duration / elapsed
         saved = src_size - new_size
         logger.info("Recording %d compressed: %.1f MB -> %.1f MB (%.0f%% saved) in %.0fs",
                     rid, src_size / 1e6, new_size / 1e6, 100 * saved / src_size, elapsed)
