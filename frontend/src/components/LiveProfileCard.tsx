@@ -65,7 +65,7 @@ export default function LiveProfileCard({
         className,
       )}
     >
-      {/* Background: the creator's avatar, or a stream while playing */}
+      {/* Background: the room snapshot or avatar, or a stream while playing */}
       {playing && recording ? (
         <InlineStream recordingId={recording.id} onClose={() => setPlaying(false)} />
       ) : imageFailed ? (

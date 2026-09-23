@@ -6,6 +6,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Lock,
+  WifiOff,
   ShieldAlert,
 } from 'lucide-react'
 import type { AppNotification } from '@/lib/api'
@@ -30,8 +31,10 @@ export function notificationIcon(type: string): { Icon: typeof Bell; variant: Ic
       return { Icon: Video, variant: 'secondary-subtle' }
     case 'clip_ready':
       return { Icon: Scissors, variant: 'primary-subtle' }
-    case 'private_live':
+    case 'private_show':
       return { Icon: Lock, variant: 'warning-subtle' }
+    case 'site_blocked':
+      return { Icon: WifiOff, variant: 'danger-subtle' }
     case 'circuit_breaker_tripped':
     case 'mass_live_anomaly':
       return { Icon: ShieldAlert, variant: 'warning-subtle' }
@@ -59,6 +62,7 @@ export function notificationTarget(n: AppNotification): string | null {
   if (n.type === 'user_live') return d.recording_id ? `/live/${d.recording_id}` : '/live'
   if (d.recording_id && n.type === 'recording_completed') return `/watch/${d.recording_id}`
   if (d.recording_id) return '/recordings'
-  if (n.type === 'private_live' || n.type === 'circuit_breaker_tripped') return '/watchlist'
+  if (n.type === 'private_show' || n.type === 'circuit_breaker_tripped') return '/watchlist'
+  if (n.type === 'site_blocked') return '/settings'
   return null
 }

@@ -1,6 +1,6 @@
 import { NavLink, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Clapperboard } from 'lucide-react'
+import { Webcam } from 'lucide-react'
 import {
   Sidebar,
   SidebarContent,
@@ -56,9 +56,9 @@ export default function SidebarNav({
       <SidebarHeader>
         <SidebarLogo>
           <IconBox variant="secondary-subtle" size="sm">
-            <Clapperboard />
+            <Webcam />
           </IconBox>
-          <span className="font-semibold tracking-tight">TikRec</span>
+          <span className="font-semibold tracking-tight">CamSuite</span>
         </SidebarLogo>
       </SidebarHeader>
 

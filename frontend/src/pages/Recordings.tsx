@@ -448,7 +448,7 @@ export default function Recordings() {
                               </button>
                             )}
                             <button
-                              title="Delete" aria-label={`Delete recording of @${row.username}`}
+                              title="Delete" aria-label={`Delete recording of ${row.username}`}
                               className="py-1.5 px-2 inline-flex items-center -ms-px first:rounded-s-lg first:ms-0 last:rounded-e-lg text-sm font-medium focus:z-10 border border-border bg-card text-danger hover:bg-danger/10 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                               onClick={() => handleDeleteRow(row.id, row.username)}
                               disabled={deleteRecordingMutation.isPending}

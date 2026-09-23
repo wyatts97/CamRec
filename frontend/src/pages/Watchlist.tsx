@@ -127,7 +127,7 @@ export default function Watchlist() {
       setAddDialogOpen(false)
       setNewUsername('')
       setIsMonitoring(false)
-      toast.success('User added')
+      toast.success('Model added')
     },
     onError: (error: Error) => {
       toast.error(error.message)
@@ -139,7 +139,7 @@ export default function Watchlist() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] })
       setSelectedIds(new Set())
-      toast.success('User removed')
+      toast.success('Model removed')
     },
     onError: (error: Error) => {
       toast.error(error.message)
@@ -466,13 +466,13 @@ export default function Watchlist() {
             <DialogTrigger>
               <Button>
                 <Plus className="h-4 w-4 mr-2" />
-                Add User
+                Add Model
               </Button>
             </DialogTrigger>
             <DialogPopup>
               <form onSubmit={handleAddUser}>
                 <DialogHeader>
-                  <DialogTitle>Add User to Watchlist</DialogTitle>
+                  <DialogTitle>Add Model to Watchlist</DialogTitle>
                   <DialogDescription>
                     Enter a Flirt4Free model name or paste their profile URL
                   </DialogDescription>
@@ -507,7 +507,7 @@ export default function Watchlist() {
                     Cancel
                   </Button>
                   <Button type="submit" disabled={addUserMutation.isPending}>
-                    {addUserMutation.isPending ? 'Adding...' : 'Add User'}
+                    {addUserMutation.isPending ? 'Adding...' : 'Add Model'}
                   </Button>
                 </DialogFooter>
               </form>
@@ -599,9 +599,9 @@ export default function Watchlist() {
           ) : filteredUsers.length === 0 ? (
             <EmptyState
               icon={Users}
-              title={searchQuery ? 'No users match your search' : 'No users in your watchlist'}
+              title={searchQuery ? 'No models match your search' : 'No models in your watchlist'}
               description={searchQuery ? 'Try a different search term' : 'Add Flirt4Free models to start monitoring their shows'}
-              actionLabel={searchQuery ? undefined : 'Add your first user'}
+              actionLabel={searchQuery ? undefined : 'Add your first model'}
               onAction={searchQuery ? undefined : () => setAddDialogOpen(true)}
             />
           ) : (
@@ -614,7 +614,7 @@ export default function Watchlist() {
                     onCheckedChange={(checked) =>
                       setSelectedIds(checked ? new Set(pageUsers.map((u) => u.id)) : new Set())
                     }
-                    aria-label="Select all users on this page"
+                    aria-label="Select all models on this page"
                   />
                   Select page
                 </label>

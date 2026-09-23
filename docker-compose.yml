@@ -3,7 +3,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: tikrec-backend
+    container_name: camsuite-backend
     restart: unless-stopped
     # Loopback only. The UI's nginx reaches the backend over the Docker
     # network; publishing on all interfaces let internet scanners hit the API
@@ -15,12 +15,11 @@ services:
       - ./data:/app/data
     environment:
       - PYTHONUNBUFFERED=1
-      - DATABASE_URL=sqlite:///./data/tikrec.db
+      - DATABASE_URL=sqlite:///./data/camsuite.db
       - RECORDINGS_DIR=/app/recordings
       - DATA_DIR=/app/data
-      - TIKTOK_RECORDER_PATH=/app/tiktok-live-recorder/src
-      - COOKIES_FILE=/app/data/cookies.json
-      - TELEGRAM_CONFIG_FILE=/app/data/telegram.json
+      # Host timezone for recording filenames (F4F_<model>_<local time>.mp4).
+      - TZ=${TZ:-UTC}
       # --- Security ---------------------------------------------------
       # Login password. If unset, one is generated on first boot and
       # printed once in the backend logs (`docker compose logs backend`).
@@ -34,6 +33,8 @@ services:
       - COOKIE_SECURE=${COOKIE_SECURE:-false}
       # Interactive API docs at /docs. Off by default.
       - ENABLE_DOCS=${ENABLE_DOCS:-false}
+      # Simultaneous recordings (each is one ffmpeg process + disk stream).
+      - MAX_CONCURRENT_RECORDINGS=${MAX_CONCURRENT_RECORDINGS:-10}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 30s
@@ -45,13 +46,9 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: tikrec-frontend
+    container_name: camsuite-frontend
     restart: unless-stopped
     ports:
       - "3000:80"
     depends_on:
       - backend
-
-volumes:
-  recordings:
-  data:

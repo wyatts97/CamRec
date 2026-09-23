@@ -15,10 +15,10 @@ export type ThemeChoice = 'system' | ThemeName
 export type ResolvedTheme = ThemeName
 
 // Storage keys are shared with the pre-paint script in index.html.
-const THEME_KEY = 'tikrec-theme'
-const ACCENT_KEY = 'tikrec-accent'
-const ACCENT_CSS_KEY = 'tikrec-accent-css'
-const ACCENT_STYLE_ID = 'tikrec-accent'
+const THEME_KEY = 'camsuite-theme'
+const ACCENT_KEY = 'camsuite-accent'
+const ACCENT_CSS_KEY = 'camsuite-accent-css'
+const ACCENT_STYLE_ID = 'camsuite-accent'
 
 /** Browser chrome colour per theme (hex of each theme's --background). */
 const THEME_COLOR: Record<ResolvedTheme, string> = {
@@ -120,7 +120,7 @@ function applyAccent(accent: string) {
   const root = document.documentElement
   // Clean up inline overrides written by earlier versions.
   for (const prop of ['--primary', '--primary-border']) root.style.removeProperty(prop)
-  safeSet('tikrec-accent-resolved', null)
+  safeSet('camsuite-accent-resolved', null)
 
   let style = document.getElementById(ACCENT_STYLE_ID) as HTMLStyleElement | null
   const color = accentColor(accent)

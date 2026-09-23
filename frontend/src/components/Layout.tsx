@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
-import { Clapperboard, Menu } from 'lucide-react'
+import { Webcam, Menu } from 'lucide-react'
 import { AnimatePresence } from 'framer-motion'
 import { PageTransition } from '@/components/motion'
 import CommandPalette from '@/components/CommandPalette'
@@ -27,9 +27,9 @@ export default function Layout() {
         <div className="flex items-center justify-between h-14 px-4">
           <div className="flex items-center gap-2.5">
             <IconBox variant="secondary-subtle" size="sm">
-              <Clapperboard />
+              <Webcam />
             </IconBox>
-            <span className="text-lg font-semibold tracking-tight text-foreground">TikRec</span>
+            <span className="text-lg font-semibold tracking-tight text-foreground">CamSuite</span>
           </div>
           <Button
             variant="plain"

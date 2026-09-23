@@ -178,7 +178,7 @@ export default function ClipDialog({
           <DialogHeader>
             <DialogTitle>Create Clip</DialogTitle>
             <DialogDescription>
-              Extract a segment from @{recording.username}.
+              Extract a segment from {recording.username}.
               {maxDuration > 0 && (
                 <span className="block mt-1">
                   Recording duration: {formatTimeInput(maxDuration)}

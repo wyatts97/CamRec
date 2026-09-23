@@ -68,7 +68,7 @@ export function useNotificationStream() {
           try {
             new Notification(incoming.title, {
               body: incoming.message,
-              tag: `tikrec-${incoming.id}`,
+              tag: `camsuite-${incoming.id}`,
             })
           } catch {
             /* ignore */

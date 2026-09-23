@@ -1,7 +1,7 @@
 {
-  "name": "TikRec WebUI",
-  "short_name": "TikRec",
-  "description": "TikTok Live Recording Manager - Monitor, record, and manage TikTok livestreams",
+  "name": "CamSuite",
+  "short_name": "CamSuite",
+  "description": "Live cam recorder - monitor, record, and manage public cam shows",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#09090b",

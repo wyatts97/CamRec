@@ -39,6 +39,7 @@ RUN apt-get update && \
     ffmpeg \
     curl \
     nodejs \
+    tzdata \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

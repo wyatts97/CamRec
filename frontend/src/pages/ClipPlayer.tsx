@@ -89,7 +89,7 @@ export default function ClipPlayer() {
           <ArrowLeft className="h-5 w-5" />
         </Button>
         <h1 className="text-2xl font-bold text-foreground tracking-tight truncate flex-1">
-          {clip.title || `Clip from @${clip.username}`}
+          {clip.title || `Clip from ${clip.username}`}
         </h1>
       </div>
 
@@ -111,7 +111,7 @@ export default function ClipPlayer() {
                 clip.id,
                 clip.file_size ?? clip.created_at,
               )}
-              title={clip.title || `@${clip.username} clip`}
+              title={clip.title || `${clip.username} clip`}
               className="w-full aspect-video"
             >
               <MediaProvider />

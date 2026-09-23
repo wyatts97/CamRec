@@ -133,7 +133,7 @@ export function RecordingVideoCard({
               </Avatar>
               <div className="min-w-0">
                 <p className="text-sm font-semibold text-foreground truncate">
-                  @{recording.username}
+                  {recording.username}
                 </p>
                 <p className="text-xs text-muted-foreground mt-0.5">
                   {fmt(recording.ended_at || recording.created_at)}

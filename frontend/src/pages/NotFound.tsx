@@ -11,7 +11,7 @@ export default function NotFound() {
       <div className="space-y-1">
         <h1 className="text-xl font-semibold text-foreground">Page not found</h1>
         <p className="text-sm text-muted-foreground">
-          That URL doesn&apos;t match any page in TikRec.
+          That URL doesn&apos;t match any page in CamSuite.
         </p>
       </div>
       <Button variant="primary" render={<Link to="/" />}>

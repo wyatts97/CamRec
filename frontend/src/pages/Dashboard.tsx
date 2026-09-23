@@ -219,7 +219,7 @@ function LiveNow({
               ? 'Checking who is live…'
               : live.length === 0
                 ? 'Nobody you watch is streaming right now.'
-                : `${live.length} of your creators ${live.length === 1 ? 'is' : 'are'} streaming.`}
+                : `${live.length} of your models ${live.length === 1 ? 'is' : 'are'} in a public show.`}
           </p>
         </div>
         {live.length > 0 && (

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tikrec-v1'
+const CACHE_NAME = 'camsuite-v1'
 
 const PRECACHE_URLS = [
   '/',
