@@ -480,7 +480,7 @@ export default function Watchlist() {
                 <DialogBody>
                   <div className="grid gap-4 py-4">
                     <div className="grid gap-2">
-                      <Label htmlFor="username">Username</Label>
+                      <Label htmlFor="username">Model</Label>
                       <Input
                         id="username"
                         placeholder="model-name or flirt4free.com URL"
