@@ -54,11 +54,11 @@ export default function Storage() {
   const compressMutation = useMutation({
     mutationFn: (ids: number[]) => api.recordings.batchCompress(ids),
     onSuccess: (res) => {
-      toast.success(`Compressed ${res.compressed} recordings`)
+      toast.success(`Archived ${res.compressed} recording(s) to a backup ZIP`)
       invalidateAll()
       setSelected(new Set())
     },
-    onError: (e: Error) => toast.error(e.message || 'Compress failed'),
+    onError: (e: Error) => toast.error(e.message || 'Archive failed'),
   })
 
   const deleteMutation = useMutation({
@@ -109,14 +109,14 @@ export default function Storage() {
 
   const handleCompressSelected = async () => {
     const ok = await confirm({
-      title: `Compress ${selected.size} recording(s)?`,
-      description: 'The original files are rewritten in place. This cannot be undone.',
+      title: `Archive ${selected.size} recording(s)?`,
+      description: 'They are packed into a ZIP in data/backups and removed from the library. To watch them again you have to extract the ZIP by hand.',
       body: (
         <p className="text-sm text-muted-foreground">
           Currently using <span className="font-semibold text-foreground">{formatBytes(selectedSize)}</span>.
         </p>
       ),
-      confirmLabel: 'Compress',
+      confirmLabel: 'Archive',
     })
     if (ok) compressMutation.mutate(Array.from(selected))
   }
@@ -328,7 +328,7 @@ export default function Storage() {
                     disabled={compressMutation.isPending || deleteMutation.isPending}
                   >
                     <Archive className="h-4 w-4 mr-1.5" />
-                    Compress {selected.size}
+                    Archive {selected.size}
                   </Button>
                   <Button
                     variant="danger"
@@ -417,7 +417,7 @@ export default function Storage() {
         <div className="flex items-start gap-3 rounded-lg border border-border bg-secondary p-3 text-sm text-muted-foreground">
           <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
           <p>
-            Compress moves original recordings to a backup archive and replaces them with smaller remuxed versions. Deleted recordings are removed permanently.
+            Archive moves recordings into a ZIP in the backups folder and removes them from the library. Delete removes them permanently. (AV1 compression above is separate and keeps recordings playable.)
           </p>
         </div>
       </>

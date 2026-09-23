@@ -23,6 +23,12 @@ export default function CompressionBadge({ recording, className }: { recording: 
         </Badge>
       )
     }
+    case 'skipped':
+      return (
+        <Badge variant="secondary" size="sm" className={className} title={recording.compress_error ?? undefined}>
+          Original kept
+        </Badge>
+      )
     case 'failed':
       return (
         <Badge variant="warning" size="sm" className={className} title={recording.compress_error ?? undefined}>
