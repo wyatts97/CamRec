@@ -9,7 +9,7 @@ already-populated MetaData.
 import os
 import tempfile
 
-_TMP = tempfile.mkdtemp(prefix="tikrec-tests-")
+_TMP = tempfile.mkdtemp(prefix="camsuite-tests-")
 
 os.environ.setdefault("DATA_DIR", _TMP)
 os.environ.setdefault("RECORDINGS_DIR", os.path.join(_TMP, "recordings"))

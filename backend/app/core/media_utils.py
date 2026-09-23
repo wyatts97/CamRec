@@ -1,4 +1,4 @@
-"""Shared media processing utilities for TikRec.
+"""Shared media processing utilities for CamSuite.
 
 Consolidates thumbnail generation, sprite sheet generation, video remuxing,
 corruption repair, and health checks that were previously duplicated across
@@ -18,7 +18,7 @@ from pathlib import Path
 
 from app.config import settings
 
-logger = logging.getLogger("tikrec.media_utils")
+logger = logging.getLogger("camsuite.media_utils")
 
 
 # ----------------------------------------------------------------
@@ -108,7 +108,7 @@ class UnsafePathError(ValueError):
 def resolve_within(base: Path, filename: str) -> Path:
     """Join ``filename`` onto ``base`` and prove the result stays inside it.
 
-    Filenames are generated from TikTok usernames and user-supplied clip
+    Filenames are generated from model usernames and user-supplied clip
     titles.  Both are validated on the way in, but this is the last line of
     defence for rows written before those constraints existed -- a filename
     containing ``..`` or an absolute path must never escape the media root.
@@ -125,12 +125,12 @@ def recording_path(filename: str) -> Path:
     return resolve_within(settings.RECORDINGS_DIR, filename)
 
 
-def generate_recording_filename(username: str) -> str:
-    """Build a standardised filename for a recorded TikTok live stream.
+def generate_recording_filename(username: str, prefix: str = "F4F") -> str:
+    """Build a standardised filename for a recorded live cam stream.
 
-    Format: ``TK_{username}_{YYYY.MM.DD_HH-MM-SS}.mp4``
+    Format: ``{PREFIX}_{username}_{YYYY.MM.DD_HH-MM-SS}.mp4`` (prefix per site, e.g. ``F4F``).
     """
-    return f"TK_{username}_{time.strftime('%Y.%m.%d_%H-%M-%S', time.localtime())}.mp4"
+    return f"{prefix}_{username}_{time.strftime('%Y.%m.%d_%H-%M-%S', time.localtime())}.mp4"
 
 
 # ----------------------------------------------------------------
@@ -644,7 +644,7 @@ def remux_to_mp4(
     """Remux a captured stream to a faststart MP4 for browser seeking.
 
     Uses error-tolerant ffmpeg flags to handle mid-stream codec switches
-    common in TikTok live recordings. Falls back to a full re-encode if
+    common in live stream recordings. Falls back to a full re-encode if
     the stream-copy remux encounters corrupt frames or if the resulting
     duration diverges from *expected_duration* by >5 %% or >30 s.
 
@@ -749,7 +749,7 @@ def remux_to_mp4(
 def _remux_part_to_mp4(ts_part: Path, out_mp4: Path) -> tuple[bool, float | None]:
     """Remux one captured ``.ts`` segment into a clean, zero-based MP4.
 
-    Each resumable segment comes from a *separate* TikTok live session with its
+    Each resumable segment comes from a *separate* live session with its
     own timestamp base. To keep audio/video aligned within the part — and to
     make the later concat produce a seamless jump cut — we rebase timestamps to
     zero (``-avoid_negative_ts make_zero``) and regenerate presentation
@@ -893,7 +893,7 @@ def finalize_segments_to_mp4(
 # ----------------------------------------------------------------
 
 def repair_video(input_path: Path, output_path: Path | None = None) -> tuple[bool, float | None]:
-    """Attempt to repair a corrupted TikTok recording.
+    """Attempt to repair a corrupted live recording.
 
     Uses two ffmpeg strategies in order:
 

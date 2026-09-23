@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 
 from app.core.notification_service import notification_service
 
-logger = logging.getLogger("tikrec.notifications")
+logger = logging.getLogger("camsuite.notifications")
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 

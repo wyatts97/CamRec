@@ -4,21 +4,20 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    APP_NAME: str = "TikRec WebUI"
+    APP_NAME: str = "CamSuite"
     DEBUG: bool = False
-    
-    DATABASE_URL: str = "sqlite:///./data/tikrec.db"
-    
+
+    DATABASE_URL: str = "sqlite:///./data/camsuite.db"
+
     RECORDINGS_DIR: Path = Path("./recordings")
     DATA_DIR: Path = Path("./data")
-    
-    TIKTOK_RECORDER_PATH: Path = Path("./tiktok-live-recorder/src")
-    COOKIES_FILE: Path = Path("./data/cookies.json")
-    TELEGRAM_CONFIG_FILE: Path = Path("./data/telegram.json")
-    
-    DEFAULT_AUTOMATIC_INTERVAL: int = 5
-    DEFAULT_BITRATE: str | None = None
+
+    # Minutes between watchlist checks. Cam rooms flip public/private often,
+    # so this is a short poll.
+    DEFAULT_AUTOMATIC_INTERVAL: int = 2
     DEFAULT_PROXY: str | None = None
+    # "best" or a max vertical resolution such as "720".
+    DEFAULT_PREFERRED_QUALITY: str = "best"
 
     # Safety-net for automatic recordings: hard cap so a false "still live"
     # signal from the recorder library can't record forever.

@@ -22,7 +22,7 @@ import httpx
 
 from app.core.settings_store import settings_store
 
-logger = logging.getLogger("tikrec.notification_sinks")
+logger = logging.getLogger("camsuite.notification_sinks")
 
 # The full set of event types the app publishes, in the order the settings UI
 # should list them. Kept in sync with the notification_service.publish() calls
@@ -35,6 +35,8 @@ ALL_EVENTS = [
     "clip_ready",
     "circuit_breaker_tripped",
     "mass_live_anomaly",
+    "private_show",
+    "site_blocked",
 ]
 
 # On by default: the ones worth waking a phone for. "recording_stopped" is a
@@ -45,7 +47,7 @@ DEFAULT_EVENTS = [
     "recording_failed",
     "recording_completed",
     "circuit_breaker_tripped",
-    "mass_live_anomaly",
+    "site_blocked",
 ]
 
 _TIMEOUT = httpx.Timeout(10.0)
@@ -84,8 +86,8 @@ def _send_ntfy(cfg: dict, notif: dict) -> None:
     server = (cfg.get("server") or "https://ntfy.sh").rstrip("/")
     # ntfy takes the body as the message and metadata in headers. Headers must
     # be latin-1 safe, so non-ASCII titles are carried in the body instead.
-    title = notif.get("title", "TikRec")
-    safe_title = title.encode("ascii", "ignore").decode("ascii") or "TikRec"
+    title = notif.get("title", "CamSuite")
+    safe_title = title.encode("ascii", "ignore").decode("ascii") or "CamSuite"
     body = notif.get("message") or title
     if safe_title != title:
         body = f"{title}\n{body}"
@@ -101,7 +103,7 @@ def _send_discord(cfg: dict, notif: dict) -> None:
     url = (cfg.get("webhook_url") or "").strip()
     if not url:
         raise ValueError("Discord webhook URL is not set")
-    content = f"**{notif.get('title', 'TikRec')}**"
+    content = f"**{notif.get('title', 'CamSuite')}**"
     if notif.get("message"):
         content += f"\n{notif['message']}"
     httpx.post(url, json={"content": content[:2000]}, timeout=_TIMEOUT).raise_for_status()
@@ -112,7 +114,7 @@ def _send_telegram(cfg: dict, notif: dict) -> None:
     chat_id = (cfg.get("chat_id") or "").strip()
     if not token or not chat_id:
         raise ValueError("Telegram bot_token and chat_id are both required")
-    text = f"*{notif.get('title', 'TikRec')}*"
+    text = f"*{notif.get('title', 'CamSuite')}*"
     if notif.get("message"):
         text += f"\n{notif['message']}"
     httpx.post(
@@ -189,7 +191,7 @@ class NotificationSinkDispatcher:
         cfg = get_config().get(name, {})
         notif = {
             "type": "test",
-            "title": "TikRec test notification",
+            "title": "CamSuite test notification",
             "message": "If you can read this, this sink is configured correctly.",
         }
         try:

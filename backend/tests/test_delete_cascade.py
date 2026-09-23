@@ -1,7 +1,6 @@
 """What survives when a recording is deleted.
 
-Live events go with it -- they are only meaningful alongside the stream. Clips
-deliberately do NOT: deleting a recording frees the large source file while
+Clips deliberately do NOT go with it: deleting a recording frees the large source file while
 keeping the clips cut from it, so their recording_id is nulled instead.
 
 Regression test. Enabling `PRAGMA foreign_keys=ON` (part of the SQLite
@@ -10,8 +9,6 @@ the delete began failing outright with FOREIGN KEY constraint failed. Before
 the pragma it had silently succeeded and left clip rows pointing at a recording
 that no longer existed.
 """
-from datetime import datetime
-
 import pytest
 
 
@@ -29,7 +26,7 @@ def db():
 _seed_counter = iter(range(1, 10_000))
 
 
-def _seed(database, models, n_clips=2, n_events=3):
+def _seed(database, models, n_clips=2):
     with database.get_session() as s:
         # Unique per call: username is a unique column and the fixture's
         # database is shared across the tests in this module.
@@ -37,7 +34,7 @@ def _seed(database, models, n_clips=2, n_events=3):
         s.add(user)
         s.commit()
         rec = models.Recording(
-            user_id=user.id, filename="TK_cascade.mp4", status="completed", mode="manual"
+            user_id=user.id, filename="F4F_cascade.mp4", status="completed", mode="manual"
         )
         s.add(rec)
         s.commit()
@@ -48,11 +45,6 @@ def _seed(database, models, n_clips=2, n_events=3):
                 filename=f"clip{i}.mp4",
                 start_time=0,
                 end_time=10,
-            ))
-        for i in range(n_events):
-            s.add(models.LiveEvent(
-                recording_id=rec.id, offset_seconds=float(i),
-                event_type="chat", user_nickname="bob", created_at=datetime.utcnow(),
             ))
         s.commit()
         return user.id, rec.id
@@ -84,18 +76,6 @@ def test_deleting_a_recording_keeps_its_clips_but_detaches_them(db):
         # ...and still know who they are of, which is only possible because
         # the username is stored on the clip itself.
         assert all(c.username and c.username.startswith("cascade_user") for c in surviving)
-
-
-def test_deleting_a_recording_removes_its_live_events(db):
-    database, models = db
-    _, rec_id = _seed(database, models, n_events=3)
-
-    with database.get_session() as s:
-        s.delete(s.query(models.Recording).filter_by(id=rec_id).one())
-        s.commit()
-
-    with database.get_session() as s:
-        assert s.query(models.LiveEvent).filter_by(recording_id=rec_id).count() == 0
 
 
 def test_deleting_a_user_removes_their_recordings_but_keeps_clips(db):

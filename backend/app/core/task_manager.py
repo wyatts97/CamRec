@@ -20,10 +20,8 @@ from app.core.media_utils import (
     finalize_segments_to_mp4,
     recording_path,
 )
-from app.core.recorder_loader import get_tiktok_api_class
-from app.core.transcription_service import transcription_service
-from app.core.live_chat_service import live_chat_service
 from app.core.notification_service import notification_service
+from app.core.site_service import site_service
 
 
 def _update_recording_status(recording_id: int, status: str, error_message: str | None = None) -> None:
@@ -40,14 +38,17 @@ def _update_recording_status(recording_id: int, status: str, error_message: str 
             db.commit()
 
 
-logger = logging.getLogger("tikrec.task_manager")
+logger = logging.getLogger("camsuite.task_manager")
 
 # Capture is treated as stalled if the .ts output file does not grow for this
 # many seconds while ffmpeg is still running (dead socket with no reconnect).
-_STALL_TIMEOUT_SECONDS = 90
+# A cam room going private freezes the playlist, so this also ends the segment
+# when a public show turns into a private one.
+_STALL_TIMEOUT_SECONDS = 45
 
-# Resumable live capture settings — when a TikTok live URL expires, ffmpeg exits
-# and we re-resolve a fresh URL instead of finalizing the recording.
+# Resumable live capture settings — when the stream drops (URL expiry, a short
+# private show, a model's connection blip) ffmpeg exits and we re-check the room
+# and resume with a fresh URL instead of finalizing the recording.
 _MAX_RESUME_ATTEMPTS = 30
 _RESUME_BACKOFF_SECONDS = (3, 5, 10, 15, 30)
 _OFFLINE_CONFIRMATION_SECONDS = 90
@@ -63,7 +64,7 @@ _HEALTHY_SEGMENT_SECONDS = 60
 # placeholder) after the room actually went offline. Re-checking room status
 # periodically closes that gap so a false "still live" signal can't keep a
 # recording running indefinitely.
-_LIVE_RECONFIRM_SECONDS = 300
+_LIVE_RECONFIRM_SECONDS = 120
 
 
 def _read_log_tail(log_path: Path | None, max_chars: int = 600) -> str | None:
@@ -81,54 +82,40 @@ def _read_log_tail(log_path: Path | None, max_chars: int = 600) -> str | None:
 
 def _check_live_with_backoff(
     username: str,
-    api: object,
-    recorder_service: object,
+    site: str,
+    model_id: str | None,
     max_retries: int = 3,
     backoff_seconds: tuple[int, ...] = (5, 10, 15),
 ) -> tuple[bool, str | None]:
-    """Confirm whether *username* is currently live.
+    """Confirm whether *username*'s room is currently public (recordable).
 
-    Performs up to *max_retries* room-alive checks with backoff to tolerate
-    transient TikTok API blips. Returns ``(is_live, room_id)``; room_id may be
-    updated even if the user is not live.
+    Performs up to *max_retries* checks with backoff to tolerate transient
+    site blips and short private shows. Returns ``(is_public, model_id)``.
     """
     for attempt in range(max_retries):
         try:
-            status = recorder_service.check_user_live(username)
-            is_live = status.get("is_live", False)
-            room_id = status.get("room_id")
-            if is_live and room_id:
-                return True, room_id
-            if not is_live and room_id:
-                # User not live but we got a room_id — try the room directly
-                try:
-                    if api.is_room_alive(room_id):
-                        return True, room_id
-                except Exception:
-                    pass
+            status = site_service.check_status(username, site, model_id)
+            model_id = status.model_id or model_id
+            if status.is_public and model_id:
+                return True, model_id
+            if status.state == "not_found":
+                return False, model_id
         except Exception as exc:
-            logger.debug("Live check attempt %d failed for @%s: %s", attempt + 1, username, exc)
+            logger.debug("Live check attempt %d failed for %s: %s", attempt + 1, username, exc)
         if attempt < max_retries - 1:
             delay = backoff_seconds[min(attempt, len(backoff_seconds) - 1)]
             time.sleep(delay)
-    return False, None
+    return False, model_id
 
 
-def _resolve_fresh_live_url(room_id: str, api: object, username: str | None = None) -> str | None:
-    """Resolve a fresh live URL for an active room_id.
-
-    TikTok live URLs expire quickly; this re-fetches a brand new URL that can be
-    used to start the next segment. Passing *username* lets the recorder fall
-    back to scraping the live page directly when TikTok's webcast API returns
-    a restricted-access response (status 4003110).
-    """
+def _resolve_fresh_live_url(model_id: str, site: str) -> str | None:
+    """Resolve a fresh recordable stream URL if the room is still public."""
     try:
-        if not api.is_room_alive(room_id):
+        if not site_service.is_public(model_id, site):
             return None
-        url = api.get_live_url(room_id, user=username)
-        return url
+        return site_service.get_live_url(model_id, site)
     except Exception as exc:
-        logger.debug("Failed to resolve fresh URL for room %s: %s", room_id, exc)
+        logger.debug("Failed to resolve fresh URL for model %s: %s", model_id, exc)
         return None
 
 
@@ -137,13 +124,13 @@ def _build_capture_cmd(
     ts_path: Path,
     duration: int | None,
     proxy: str | None,
-    cookies: dict | None,
+    headers: dict[str, str] | None,
 ) -> list[str]:
-    """Build the ffmpeg capture command, wiring proxy/cookies when present.
+    """Build the ffmpeg capture command, wiring proxy/headers when present.
 
-    ffmpeg consumes the live URL directly (HLS m3u8 or FLV) and writes a single
-    continuous MPEG-TS. Proxy and cookies are passed so a geo-restricted stream
-    reachable only through the same proxy/session as URL discovery still works.
+    ffmpeg consumes the HLS variant playlist directly and writes a single
+    continuous MPEG-TS. The proxy is passed so a stream reachable only through
+    the same proxy as URL discovery still works.
     """
     cmd = [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "warning",
@@ -160,10 +147,12 @@ def _build_capture_cmd(
     ]
     if proxy:
         cmd += ["-http_proxy", proxy]
-    if cookies:
-        cookie_header = "; ".join(f"{k}={v}" for k, v in cookies.items() if k)
-        if cookie_header:
-            cmd += ["-headers", f"Cookie: {cookie_header}\r\n"]
+    headers = dict(headers or {})
+    user_agent = headers.pop("User-Agent", None)
+    if user_agent:
+        cmd += ["-user_agent", user_agent]
+    if headers:
+        cmd += ["-headers", "".join(f"{k}: {v}\r\n" for k, v in headers.items())]
     cmd += [
         # Record the stream verbatim — keep the original timestamps. Do NOT add
         # +igndts+genpts here: regenerating timestamps during a live capture lets
@@ -181,13 +170,13 @@ def _build_capture_cmd(
 def _notify_recording_finished(recording_id: int, username: str, status: str, duration_seconds: int) -> None:
     """Publish a notification when a recording reaches a terminal state."""
     if status == "completed":
-        title = f"Recording completed: @{username}"
+        title = f"Recording completed: {username}"
         message = f"Recorded {duration_seconds // 60} min"
     elif status == "stopped":
-        title = f"Recording stopped: @{username}"
+        title = f"Recording stopped: {username}"
         message = f"Recorded {duration_seconds // 60} min"
     else:  # failed
-        title = f"Recording failed: @{username}"
+        title = f"Recording failed: {username}"
         message = "The recording ended unexpectedly."
     notification_service.publish(
         type=f"recording_{status}",
@@ -202,18 +191,16 @@ class RecordingTask:
         self,
         recording_id: int,
         username: str,
-        room_id: str,
+        model_id: str,
+        site: str,
         duration: int | None = None,
-        bitrate: str | None = None,
-        cookies: dict | None = None,
         proxy: str | None = None
     ):
         self.recording_id = recording_id
         self.username = username
-        self.room_id = room_id
+        self.model_id = model_id
+        self.site = site
         self.duration = duration
-        self.bitrate = bitrate
-        self.cookies = cookies
         self.proxy = proxy
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -221,7 +208,6 @@ class RecordingTask:
         self._ts_path: Path | None = None
         self._log_path: Path | None = None
         self._proc: subprocess.Popen | None = None
-        self._chat_started_at: datetime = datetime.utcnow()
         self._start_time: float | None = None
         self._capture_error: str | None = None
         self._segments: list[Path] = []
@@ -268,30 +254,27 @@ class RecordingTask:
             db.commit()
 
         # --- Phase 2: validate room and get initial stream URL (no DB) ---
-        api_cls = get_tiktok_api_class()
-        api = api_cls(proxy=self.proxy, cookies=self.cookies)
-        from app.core.recorder_service import recorder_service
-
-        if not api.is_room_alive(self.room_id):
-            _update_recording_status(self.recording_id, "failed", "User is not live")
+        try:
+            is_public = site_service.is_public(self.model_id, self.site)
+        except Exception:
+            is_public = True  # status blip: let the stream lookup decide
+        if not is_public:
+            _update_recording_status(self.recording_id, "failed", "Room is not in a public show")
             return
 
-        live_url = api.get_live_url(self.room_id, user=self.username)
-        if not live_url:
-            _update_recording_status(self.recording_id, "failed", "Could not get live stream URL")
+        try:
+            live_url = site_service.get_live_url(self.model_id, self.site)
+        except Exception as exc:
+            _update_recording_status(self.recording_id, "failed", str(exc))
             return
-
-        # Start live chat/gift capture after stream URL is confirmed so that
-        # offset_seconds values align with the video start time rather than the
-        # earlier status-change time (Phase 1 can precede Phase 3 by 5-30 s).
-        self._chat_started_at = datetime.utcnow()
-        self._start_chat(self.room_id)
+        headers = site_service.adapter(self.site).ffmpeg_headers()
 
         # --- Phase 3: resumable capture into sequential segments ---
-        # TikTok live URLs expire every few minutes. Instead of finalizing the
-        # recording when ffmpeg exits, we re-resolve a fresh URL and start a new
-        # segment, then concatenate all segments into one continuous file at
-        # finalize time. This keeps one live session as one recording.
+        # A public show is interrupted by private shows and connection blips.
+        # Instead of finalizing the recording when ffmpeg exits, we re-check
+        # the room, re-resolve a fresh URL and start a new segment, then
+        # concatenate all segments into one file at finalize time. This keeps
+        # one broadcast session as one recording.
         output_path = recording_path(filename)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         self._output_path = output_path
@@ -299,7 +282,7 @@ class RecordingTask:
         self._log_path = output_path.with_suffix(".ffmpeg.log")
         self._start_time = time.time()
 
-        room_id = self.room_id
+        model_id = self.model_id
         resumed = False
         resume_attempts = 0
         session_done = False
@@ -322,7 +305,7 @@ class RecordingTask:
             segment_index = len(self._segments) + 1
             segment_path = output_path.with_suffix(f".part{segment_index:03d}.ts")
 
-            cmd = _build_capture_cmd(live_url, segment_path, segment_remaining, self.proxy, self.cookies)
+            cmd = _build_capture_cmd(live_url, segment_path, segment_remaining, self.proxy, headers)
             log_fh = None
             proc = None
             try:
@@ -378,22 +361,22 @@ class RecordingTask:
                     segment_failed = True
                     break
 
-                # Independent liveness re-check: catches a stream that keeps
-                # producing bytes (e.g. stale/looping placeholder) even though
-                # the room has actually gone offline — the stall detector above
-                # can't see this since the file is still growing.
+                # Independent public-room re-check: catches a stream that keeps
+                # producing bytes (e.g. a placeholder loop) after the show went
+                # private or offline — the stall detector above can't see this
+                # since the file is still growing.
                 if now - last_live_reconfirm > _LIVE_RECONFIRM_SECONDS:
                     last_live_reconfirm = now
                     try:
-                        still_alive = api.is_room_alive(room_id)
+                        still_public = site_service.is_public(model_id, self.site)
                     except Exception:
-                        still_alive = True  # network blip — don't kill a good recording
-                    if not still_alive:
-                        logger.warning(
-                            "Recording %d: room %s no longer alive on re-check; ending session",
-                            self.recording_id, room_id,
+                        still_public = True  # network blip — don't kill a good recording
+                    if not still_public:
+                        logger.info(
+                            "Recording %d: model %s no longer public on re-check; pausing capture",
+                            self.recording_id, model_id,
                         )
-                        self._capture_error = "Room confirmed offline during periodic re-check"
+                        self._capture_error = "Room left the public show during periodic re-check"
                         segment_failed = True
                         break
                 time.sleep(_SEGMENT_CHECK_INTERVAL)
@@ -444,21 +427,20 @@ class RecordingTask:
             # Otherwise, decide whether the session really ended or just needs a fresh URL.
             if segment_failed or proc.poll() is not None:
                 if segment_healthy:
-                    # A long, clean segment ending is almost always the signed
-                    # URL expiring (~every 30 min), not the broadcast ending.
-                    # Reset the counter so backoff doesn't grow across a long
-                    # session, and try a fresh URL straight away: every second
-                    # spent here is a second missing from the recording.
+                    # A long, clean segment ending is usually a stream hiccup,
+                    # not the broadcast ending. Reset the counter so backoff
+                    # doesn't grow across a long session, and try a fresh URL
+                    # straight away: every second spent here is a second
+                    # missing from the recording.
                     resume_attempts = 0
-                    fresh_url = _resolve_fresh_live_url(room_id, api, self.username)
+                    fresh_url = _resolve_fresh_live_url(model_id, self.site)
                     if fresh_url:
                         live_url = fresh_url
                         resumed = True
                         logger.info(
-                            "Recording %d: segment ended after %ds; fast-resuming with fresh URL (room %s)",
-                            self.recording_id, int(time.time() - segment_started), room_id,
+                            "Recording %d: segment ended after %ds; fast-resuming with fresh URL (model %s)",
+                            self.recording_id, int(time.time() - segment_started), model_id,
                         )
-                        self._start_chat(room_id, resumed=True)
                         continue
 
                 resume_attempts += 1
@@ -478,36 +460,35 @@ class RecordingTask:
                 )
                 time.sleep(backoff)
 
-                is_live, fresh_room_id = _check_live_with_backoff(
+                is_public, fresh_model_id = _check_live_with_backoff(
                     self.username,
-                    api,
-                    recorder_service,
+                    self.site,
+                    model_id,
                     max_retries=3,
                     backoff_seconds=(10, 20, _OFFLINE_CONFIRMATION_SECONDS // 3),
                 )
-                if not is_live or not fresh_room_id:
+                if not is_public or not fresh_model_id:
                     logger.info(
-                        "Recording %d: user @%s confirmed offline, finalizing session",
+                        "Recording %d: %s no longer in a public show, finalizing session",
                         self.recording_id, self.username,
                     )
                     break
 
-                # User is still live — refresh the URL and resume.
-                fresh_url = _resolve_fresh_live_url(fresh_room_id, api, self.username)
+                # Room is public again — refresh the URL and resume.
+                fresh_url = _resolve_fresh_live_url(fresh_model_id, self.site)
                 if not fresh_url:
                     logger.warning(
-                        "Recording %d: user still live but could not resolve fresh URL; retrying",
+                        "Recording %d: room public but could not resolve fresh URL; retrying",
                         self.recording_id,
                     )
                     continue
-                room_id = fresh_room_id
+                model_id = fresh_model_id
                 live_url = fresh_url
                 resumed = True
                 logger.info(
-                    "Recording %d: resuming session with fresh URL (room %s)",
-                    self.recording_id, room_id,
+                    "Recording %d: resuming session with fresh URL (model %s)",
+                    self.recording_id, model_id,
                 )
-                self._start_chat(room_id, resumed=True)
             else:
                 # This path should be unreachable; treat as session end to be safe.
                 break
@@ -515,41 +496,8 @@ class RecordingTask:
         self._total_elapsed_seconds = time.time() - self._start_time
         self._finalize_recording()
 
-    def _start_chat(self, room_id: str, resumed: bool = False) -> None:
-        """Start chat capture, or restart it if the previous listener died.
-
-        Offsets stay relative to the original ``_chat_started_at`` so events
-        captured after a resume still line up with the stitched video.
-        """
-        if resumed and live_chat_service.is_listening(self.recording_id):
-            return
-        try:
-            started = live_chat_service.start_listening(
-                recording_id=self.recording_id,
-                username=self.username,
-                room_id=room_id,
-                started_at=self._chat_started_at,
-                proxy=self.proxy,
-                cookies=self.cookies,
-            )
-        except Exception as e:
-            logger.warning("Failed to start chat capture for recording %d: %s", self.recording_id, e)
-            return
-        if started and resumed:
-            logger.info("Recording %d: restarted chat capture after resume", self.recording_id)
-        elif not started and not resumed:
-            # Refused (the MAX_WORKERS cap). The recording proceeds either
-            # way, but say so loudly: otherwise the missing chat only shows
-            # up as an empty timeline later.
-            logger.warning(
-                "Chat capture NOT started for recording %d (@%s) - no chat or "
-                "gift events will be captured for this recording",
-                self.recording_id,
-                self.username,
-            )
-
     def _finalize_recording(self) -> None:
-        """Finalize a recording: flush file, update DB, stop chat, remux, thumbnails.
+        """Finalize a recording: flush file, update DB, remux, thumbnails.
         Called from _run() on normal exit and from _run_with_error_handling()
         in finally to guarantee it always runs even on unexpected thread death.
         """
@@ -562,10 +510,6 @@ class RecordingTask:
 
         if output_path is None or start_time is None:
             # Recording never reached Phase 3 (no file created)
-            try:
-                live_chat_service.stop_listening(self.recording_id)
-            except Exception:
-                pass
             return
 
         ts_path = self._ts_path
@@ -606,12 +550,6 @@ class RecordingTask:
                         detail = f"{detail} | ffmpeg: {log_tail}"
                     recording.error_message = recording.error_message or detail
                 db.commit()
-
-        # Stop live chat/gift capture regardless of outcome.
-        try:
-            live_chat_service.stop_listening(self.recording_id)
-        except Exception:
-            pass
 
         if not captured:
             try:
@@ -658,8 +596,6 @@ class RecordingTask:
                     recording.is_corrupt = False
                     recording.status = "stopped" if stopped else "completed"
                     recording.error_message = None
-                    if recording.transcript_status is None:
-                        recording.transcript_status = "pending"
                     db.commit()
                     final_status = recording.status
 
@@ -669,7 +605,6 @@ class RecordingTask:
 
             run_background(generate_thumbnail, output_path, None, self.recording_id)
             run_background(generate_sprite, output_path)
-            transcription_service.enqueue(self.recording_id)
         else:
             # Finalize + repair both failed — keep the .ts/parts so the user can
             # retry via the repair button, and surface a diagnosable failure.
@@ -747,10 +682,9 @@ class TaskManager:
         self,
         recording_id: int,
         username: str,
-        room_id: str,
+        model_id: str,
+        site: str,
         duration: int | None = None,
-        bitrate: str | None = None,
-        cookies: dict | None = None,
         proxy: str | None = None
     ) -> bool:
         with self._lock:
@@ -769,10 +703,9 @@ class TaskManager:
             task = RecordingTask(
                 recording_id=recording_id,
                 username=username,
-                room_id=room_id,
+                model_id=model_id,
+                site=site,
                 duration=duration,
-                bitrate=bitrate,
-                cookies=cookies,
                 proxy=proxy
             )
             task.start()
@@ -823,37 +756,33 @@ task_manager = TaskManager()
 
 
 class MonitorService:
-    """Background loop that auto-records watched users when they go live.
+    """Background loop that tracks watchlist room states and auto-records.
 
-    Every ``automatic_interval`` minutes it checks each user flagged with
-    ``is_monitoring`` and, if live and not already recording, starts a recording.
+    Every ``automatic_interval`` minutes it fetches each site's online list
+    once (``bulk_status``), updates every watchlist model's room state, and
+    starts a recording for monitored models whose room is in a public show.
 
-    Rate-limiting: a 1.5 s delay is inserted between each user check to
-    avoid triggering TikTok's rate limiter.  Consecutive failures for a user
-    trigger exponential backoff (2×, 4×, … up to 60 s).
+    Consecutive status errors for a model trigger exponential backoff before
+    its next confirmation (2×, 4×, … up to 60 s).
     """
 
-    # Delay between individual user checks (seconds)
-    _INTER_USER_DELAY = 1.5
-    # How long to skip re-checking a room that TikTok says is private.
-    _PRIVATE_LIVE_BACKOFF = 900
+    # Delay between recording starts / per-model confirmations (seconds)
+    _INTER_USER_DELAY = 1.0
     # Exponential-backoff limits
     _BACKOFF_BASE = 2          # first retry waits 2 s
     _BACKOFF_MAX = 60          # never wait more than 60 s per user
-    # Brief delay before re-confirming a "live" signal so a single flickering
-    # API response can't start a recording on its own.
-    _LIVE_CONFIRM_DELAY = 3
+    # Brief delay before re-confirming a "public" signal so a single stale
+    # list entry can't start a recording on its own.
+    _LIVE_CONFIRM_DELAY = 2
     # Circuit breaker: if a user's last N automatic recordings all ended up
     # failed/corrupt within the lookback window, auto-recording is paused for
     # them instead of retrying forever every check interval.
     _CIRCUIT_BREAKER_THRESHOLD = 3
     _CIRCUIT_BREAKER_LOOKBACK_MINUTES = 120
-    # Mass-simultaneous-live anomaly guard: a real TikTok event where many
-    # watched creators go live in the same check cycle is possible but rare.
-    # If more users than this trip "live" in one cycle, treat it as a likely
-    # systemic API glitch and require a stricter, slower confirmation for the
-    # rest of the cycle instead of blindly trusting the signal.
-    _MASS_LIVE_ANOMALY_MIN_ABSOLUTE = 3
+    # Mass-simultaneous-live anomaly guard: if more monitored models than this
+    # flip to public in one cycle, treat it as a likely site glitch and use a
+    # slower confirmation for the rest of the cycle.
+    _MASS_LIVE_ANOMALY_MIN_ABSOLUTE = 5
     _MASS_LIVE_ANOMALY_FRACTION = 0.5
 
     def __init__(self):
@@ -866,12 +795,13 @@ class MonitorService:
         self._check_failures: dict[int, int] = {}
         # Users whose circuit breaker has tripped — only notify once per trip
         self._circuit_notified: set[int] = set()
-        # user_id -> (room_id, monotonic deadline). A live that needs a login
-        # fails the stream-URL check identically every cycle, so after the
-        # first failure the same room is not re-probed until the deadline.
-        self._private_rooms: dict[int, tuple[str, float]] = {}
+        # Users already notified about the current private show; cleared when
+        # they go offline or back to public.
+        self._private_notified: set[int] = set()
         # Last time retention cleanup ran, so it fires about once a day.
         self._last_cleanup_at: datetime | None = None
+        # Whether the last cycle hit a site block, for the health endpoint.
+        self.last_error: str | None = None
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -903,32 +833,24 @@ class MonitorService:
             "next_check_in_seconds": next_check_in,
             "interval_minutes": self._interval_seconds() // 60,
             "check_interval": self._interval_seconds(),
+            "last_error": self.last_error,
         }
 
-    def _mark_private_live(self, user, room_id: str) -> None:
-        """Record that *user*'s live in *room_id* needs a login, notifying once per room."""
-        previous = self._private_rooms.get(user.id)
-        self._private_rooms[user.id] = (room_id, time.monotonic() + self._PRIVATE_LIVE_BACKOFF)
-        if previous is not None and previous[0] == room_id:
+    def _notify_private(self, user) -> None:
+        """Tell the user a monitored model is online but in a private show, once per show."""
+        if user.id in self._private_notified:
             return
-        logger.warning(
-            "@%s is live in a private room (%s) that requires login cookies; "
-            "re-checking in %d min",
-            user.username, room_id, self._PRIVATE_LIVE_BACKOFF // 60,
-        )
+        self._private_notified.add(user.id)
+        logger.info("%s is online in a private/non-public show; not recording", user.username)
         try:
             notification_service.publish(
-                type="private_live",
-                title=f"@{user.username} is live, but the stream is private",
-                message=(
-                    "TikTok only lets logged-in viewers with access watch this live, so it "
-                    "can't be recorded. If it's followers- or subscribers-only, the account "
-                    "in your Settings cookies needs that access."
-                ),
-                data={"user_id": user.id, "username": user.username, "room_id": room_id},
+                type="private_show",
+                title=f"{user.username} is in a private show",
+                message="Only public (free chat) shows are recorded. Recording starts when the room goes public.",
+                data={"user_id": user.id, "username": user.username},
             )
         except Exception:
-            logger.debug("Failed to publish private-live notification", exc_info=True)
+            logger.debug("Failed to publish private-show notification", exc_info=True)
 
     def _circuit_tripped(self, user_id: int) -> bool:
         """Return True if auto-recording should be paused for *user_id*.
@@ -962,12 +884,7 @@ class MonitorService:
             return settings.DEFAULT_AUTOMATIC_INTERVAL * 60
 
     def _maybe_run_auto_cleanup(self):
-        """Run retention cleanup at most once a day, if it is enabled.
-
-        The auto-cleanup toggle has always been surfaced in the UI and honoured
-        by CleanupService, but nothing ever called it outside the manual
-        "Run now" button -- so enabling it silently did nothing.
-        """
+        """Run retention cleanup at most once a day, if it is enabled."""
         from app.core.cleanup_service import cleanup_service
 
         if not cleanup_service.get_config().get("enabled"):
@@ -1013,33 +930,31 @@ class MonitorService:
                 break
 
     def _check_once(self):
-        from app.core.recorder_service import recorder_service
+        from types import SimpleNamespace
+
         from app.core.settings_store import settings_store
+        from app.core.sites import SiteBlockedError
         from app.core.unified_avatar_service import unified_avatar_service
 
-        if not recorder_service.is_available():
-            return
-
         # --- Phase 0: retry failed avatar fetches ---
-        retryable = unified_avatar_service.get_retryable_usernames()
-        if retryable:
-            logger.info(f"Retrying avatar fetch for {len(retryable)} users")
-            for username in retryable:
-                if self._stop_event.is_set():
-                    return
-                unified_avatar_service.fetch_and_cache(username)
-                if self._stop_event.wait(timeout=1.5):
-                    return
-
-        # --- Phase 1: fetch monitored users and active recordings (short session) ---
-        with get_session() as db:
-            monitored = db.query(User).filter(
-                User.is_monitoring == True,  # noqa: E712
-                User.is_on_watchlist == True,  # noqa: E712
-            ).all()
-            if not monitored:
+        for site, username in unified_avatar_service.get_retryable():
+            if self._stop_event.is_set():
                 return
+            unified_avatar_service.fetch_and_cache(site, username)
 
+        # --- Phase 1: snapshot the watchlist (short session) ---
+        with get_session() as db:
+            rows = db.query(User).filter(User.is_on_watchlist == True).all()  # noqa: E712
+            if not rows:
+                return
+            users = [
+                SimpleNamespace(
+                    id=u.id, site=u.site, username=u.username, model_id=u.model_id,
+                    display_name=u.display_name, is_live=u.is_live,
+                    is_monitoring=u.is_monitoring,
+                )
+                for u in rows
+            ]
             recording_user_ids = {
                 rec.user_id
                 for rec in db.query(Recording).filter(
@@ -1047,43 +962,114 @@ class MonitorService:
                 ).all()
             }
 
-        cookies = recorder_service.load_cookies()
+        # --- Phase 2: one bulk status call per site (no DB session held) ---
+        statuses = {}
+        self.last_error = None
+        by_site: dict[str, list] = {}
+        for u in users:
+            by_site.setdefault(u.site, []).append(u)
+        for site, site_users in by_site.items():
+            try:
+                result = site_service.adapter(site).bulk_status([u.username for u in site_users])
+            except SiteBlockedError as exc:
+                self.last_error = str(exc)
+                logger.warning("Site %s blocked the status check: %s", site, exc)
+                try:
+                    notification_service.publish(
+                        type="site_blocked",
+                        title=f"{site} is blocking status checks",
+                        message=str(exc),
+                        data={"site": site},
+                    )
+                except Exception:
+                    pass
+                continue
+            except Exception as exc:
+                self.last_error = str(exc)
+                logger.warning("Bulk status for %s failed: %s", site, exc)
+                continue
+            for u in site_users:
+                statuses[u.id] = result.get(u.username)
+
+        # --- Phase 3: persist room states ---
+        now = datetime.utcnow()
+        with get_session() as db:
+            for u in users:
+                st = statuses.get(u.id)
+                if st is None:
+                    continue
+                row = db.query(User).filter(User.id == u.id).first()
+                if not row:
+                    continue
+                row.room_state = st.state
+                row.is_live = st.is_public
+                row.last_checked = now
+                if st.model_id:
+                    row.model_id = st.model_id
+                    u.model_id = st.model_id
+                if st.display_name and not row.display_name:
+                    row.display_name = st.display_name
+            db.commit()
+
+        # --- Phase 4: avatars, notifications, recordings ---
         proxy = settings_store.get("proxy", settings.DEFAULT_PROXY)
-        bitrate = settings_store.get("default_bitrate", settings.DEFAULT_BITRATE)
         max_recording_seconds = max(
             60,
             int(settings_store.get("max_recording_hours", settings.DEFAULT_MAX_RECORDING_HOURS)) * 3600,
         )
+        monitored_count = sum(1 for u in users if u.is_monitoring)
         mass_live_anomaly_threshold = max(
             self._MASS_LIVE_ANOMALY_MIN_ABSOLUTE,
-            (len(monitored) + 1) // 2,
+            int(monitored_count * self._MASS_LIVE_ANOMALY_FRACTION) + 1,
         )
         confirmed_live_count = 0
         mass_live_anomaly_notified = False
 
-        for user in monitored:
+        for user in users:
             if self._stop_event.is_set():
                 break
-            if user.id in recording_user_ids:
+            st = statuses.get(user.id)
+            if st is None:
                 continue
 
-            # --- Circuit breaker: stop hammering a user whose last several
-            # automatic recordings all came back bad in a short window ---
+            if st.error:
+                self._check_failures[user.id] = self._check_failures.get(user.id, 0) + 1
+            else:
+                self._check_failures.pop(user.id, None)
+
+            if (st.avatar_url or st.thumbnail_url) and not unified_avatar_service.has_cached_avatar(user.site, user.username):
+                run_background(
+                    unified_avatar_service.fetch_and_cache,
+                    user.site, user.username, st.avatar_url, st.thumbnail_url,
+                )
+
+            if st.state != "private":
+                self._private_notified.discard(user.id)
+
+            if not user.is_monitoring or user.id in recording_user_ids:
+                continue
+            if st.state == "private":
+                self._notify_private(user)
+                continue
+            if not st.is_public or not st.model_id:
+                continue
+
+            # --- Circuit breaker ---
             if self._circuit_tripped(user.id):
                 if user.id not in self._circuit_notified:
                     self._circuit_notified.add(user.id)
                     logger.warning(
-                        "Circuit breaker tripped for @%s — pausing auto-recording "
+                        "Circuit breaker tripped for %s — pausing auto-recording "
                         "after %d consecutive bad automatic recordings",
                         user.username, self._CIRCUIT_BREAKER_THRESHOLD,
                     )
                     try:
                         notification_service.publish(
                             type="circuit_breaker_tripped",
-                            title=f"Auto-recording paused for @{user.username}",
+                            title=f"Auto-recording paused for {user.username}",
                             message=(
                                 f"The last {self._CIRCUIT_BREAKER_THRESHOLD} automatic recordings "
-                                "failed or came out corrupt. Auto-recording is paused for this user "
+                                "failed or came out corrupt. Auto-recording is paused for this model "
                                 "until you investigate."
                             ),
                             data={"user_id": user.id, "username": user.username},
@@ -1097,150 +1083,67 @@ class MonitorService:
             failures = self._check_failures.get(user.id, 0)
             if failures > 0:
                 backoff = min(self._BACKOFF_BASE ** failures, self._BACKOFF_MAX)
-                logger.debug("Backoff %d s for @%s (%d consecutive failures)",
-                             backoff, user.username, failures)
                 if self._stop_event.wait(timeout=backoff):
                     return
 
-            # --- Network calls happen with NO DB session held ---
-            status_info = recorder_service.check_user_live(user.username)
-            is_live = status_info.get("is_live", False)
-            room_id = status_info.get("room_id")
-            last_checked = datetime.utcnow()
-
-            # --- Update failure counter / log success ---
-            if status_info.get("error"):
-                self._check_failures[user.id] = failures + 1
-            else:
-                self._check_failures.pop(user.id, None)
-
-            if not is_live or not room_id:
-                self._private_rooms.pop(user.id, None)
-                # --- Update user status (short session) ---
-                with get_session() as db:
-                    u = db.query(User).filter(User.id == user.id).first()
-                    if u:
-                        u.is_live = is_live
-                        u.room_id = room_id
-                        u.last_checked = last_checked
-                        db.commit()
-                # Rate-limiting delay between users
-                if self._stop_event.wait(timeout=self._INTER_USER_DELAY):
-                    return
-                continue
-
-            # --- Known private live in the same room: skip the confirmation
-            # round-trips until the backoff expires or the room changes. ---
-            private = self._private_rooms.get(user.id)
-            if private is not None:
-                if private[0] == room_id and time.monotonic() < private[1]:
-                    if self._stop_event.wait(timeout=self._INTER_USER_DELAY):
-                        return
-                    continue
-                if private[0] != room_id:
-                    self._private_rooms.pop(user.id, None)
-
-            # --- Mass-simultaneous-live anomaly guard: if an unusually large
-            # share of the watchlist has already come back "live" this cycle,
-            # a systemic API glitch is more likely than a real coincidence —
-            # slow down and demand stricter confirmation for the rest of the
-            # cycle instead of trusting the signal outright. ---
+            # --- Mass-live anomaly guard ---
             mass_live_anomaly = confirmed_live_count >= mass_live_anomaly_threshold
             if mass_live_anomaly and not mass_live_anomaly_notified:
                 mass_live_anomaly_notified = True
                 logger.warning(
-                    "Mass-live anomaly: %d/%d monitored users reported live in one "
-                    "check cycle — treating remaining live signals with extra scrutiny",
-                    confirmed_live_count, len(monitored),
+                    "Mass-live anomaly: %d/%d monitored models reported public in one cycle",
+                    confirmed_live_count, monitored_count,
                 )
                 try:
                     notification_service.publish(
                         type="mass_live_anomaly",
-                        title="Unusual number of users reported live at once",
+                        title="Unusual number of models went public at once",
                         message=(
-                            f"{confirmed_live_count} monitored users came back live in the same "
-                            "check cycle. This is more likely a false-positive from the TikTok "
-                            "API than a real coincidence — extra confirmation is being applied."
+                            f"{confirmed_live_count} monitored models came back public in the same "
+                            "check cycle. Extra confirmation is being applied."
                         ),
-                        data={"confirmed_live_count": confirmed_live_count, "total_monitored": len(monitored)},
+                        data={"confirmed_live_count": confirmed_live_count, "total_monitored": monitored_count},
                     )
                 except Exception:
                     logger.debug("Failed to publish mass-live-anomaly notification", exc_info=True)
 
-            # --- Double-confirm before starting a recording: a brief pause and
-            # a second independent check filters out a single flickering/stale
-            # "live" response from the recorder API so it can't spawn a bogus
-            # recording on its own. During a mass-live anomaly, wait longer to
-            # give a transient API glitch more time to clear. ---
+            # --- Double-confirm against the room itself, then resolve the stream ---
             confirm_delay = self._LIVE_CONFIRM_DELAY * (3 if mass_live_anomaly else 1)
             if self._stop_event.wait(timeout=confirm_delay):
                 return
             try:
-                confirmed_live = recorder_service.get_api().is_room_alive(room_id)
-            except Exception:
+                confirmed_live = site_service.is_public(st.model_id, user.site)
+                if confirmed_live:
+                    confirmed_live = bool(site_service.get_live_url(st.model_id, user.site))
+            except Exception as e:
+                logger.info("Public-room confirmation failed for %s: %s", user.username, e)
                 confirmed_live = False
 
-            # --- Independent verification: hit a *different* upstream code
-            # path (webcast/room/info stream extraction) than check_alive, so
-            # a bug in one check is unlikely to also be wrong in the other.
-            # This is required outright during a mass-live anomaly, and used
-            # as a normal second opinion otherwise. ---
-            if confirmed_live:
-                try:
-                    live_url = recorder_service.get_live_url(room_id, username=user.username)
-                    confirmed_live = bool(live_url)
-                except Exception as e:
-                    confirmed_live = False
-                    if "private" in str(e).lower():
-                        self._mark_private_live(user, room_id)
-                    else:
-                        logger.info(
-                            "Independent stream-URL check failed for @%s: %s", user.username, e,
-                        )
-
             if not confirmed_live:
-                logger.info(
-                    "Live signal for @%s did not hold up on re-check; skipping this cycle",
-                    user.username,
-                )
-                with get_session() as db:
-                    u = db.query(User).filter(User.id == user.id).first()
-                    if u:
-                        u.is_live = False
-                        u.room_id = room_id
-                        u.last_checked = last_checked
-                        db.commit()
-                if self._stop_event.wait(timeout=self._INTER_USER_DELAY):
-                    return
+                logger.info("Public signal for %s did not hold up on re-check; skipping this cycle", user.username)
                 continue
 
             confirmed_live_count += 1
 
-            # --- User is live: notify on transition, then record ---
+            # --- Notify on transition, then record ---
             if not user.is_live:
                 try:
                     notification_service.publish(
                         type="user_live",
-                        title=f"@{user.username} is live",
-                        message="A monitored user just went live — recording is starting.",
+                        title=f"{user.username} is live",
+                        message="A monitored model started a public show — recording is starting.",
                         data={"user_id": user.id, "username": user.username},
                     )
                 except Exception:
                     logger.debug("Failed to publish user-live notification", exc_info=True)
 
-            # --- update user and create recording (short session) ---
             # The claim closes the window between the once-per-cycle
             # "already recording" snapshot above and this insert.
             with task_manager.claim_user(user.id) as claimed:
                 if not claimed:
-                    logger.info(
-                        "Skipping auto-record for @%s: another start is already in flight",
-                        user.username,
-                    )
+                    logger.info("Skipping auto-record for %s: another start is already in flight", user.username)
                     continue
 
-                # Re-check under the claim -- the snapshot is now stale by
-                # several seconds of network calls and sleeps.
                 with get_session() as db:
                     already = (
                         db.query(Recording)
@@ -1250,23 +1153,17 @@ class MonitorService:
                         )
                         .first()
                     )
-                if already is not None:
-                    logger.info(
-                        "Skipping auto-record for @%s: recording %d already active",
-                        user.username, already.id,
-                    )
-                    continue
+                    if already is not None:
+                        logger.info(
+                            "Skipping auto-record for %s: recording %d already active",
+                            user.username, already.id,
+                        )
+                        continue
 
-                filename = generate_recording_filename(user.username)
-                with get_session() as db:
-                    u = db.query(User).filter(User.id == user.id).first()
-                    if u:
-                        u.is_live = True
-                        u.room_id = room_id
-                        u.last_checked = last_checked
+                    prefix = site_service.adapter(user.site).file_prefix
                     recording = Recording(
                         user_id=user.id,
-                        filename=filename,
+                        filename=generate_recording_filename(user.username, prefix),
                         status="pending",
                         mode="automatic",
                     )
@@ -1278,24 +1175,21 @@ class MonitorService:
             started = task_manager.start_recording(
                 recording_id=recording_id,
                 username=user.username,
-                room_id=room_id,
+                model_id=st.model_id,
+                site=user.site,
                 duration=max_recording_seconds,
-                cookies=cookies,
                 proxy=proxy,
-                bitrate=bitrate,
             )
             if started:
-                logger.info(f"Auto-started recording for @{user.username}")
+                logger.info("Auto-started recording for %s", user.username)
             else:
-                # --- Mark recording as failed (short session) ---
                 with get_session() as db:
                     rec = db.query(Recording).filter(Recording.id == recording_id).first()
                     if rec:
                         rec.status = "failed"
-                        rec.error_message = "Failed to start automatic recording"
+                        rec.error_message = "Failed to start automatic recording (concurrency limit?)"
                         db.commit()
 
-            # Rate-limiting delay between users
             if self._stop_event.wait(timeout=self._INTER_USER_DELAY):
                 return
 

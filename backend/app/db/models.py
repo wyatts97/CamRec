@@ -1,27 +1,34 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, BigInteger, Float
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, BigInteger, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from app.db.database import Base
 
 
 class User(Base):
+    """A watched cam model on one site."""
+
     __tablename__ = "users"
-    
+    __table_args__ = (UniqueConstraint("site", "username", name="uq_users_site_username"),)
+
     id = Column(Integer, primary_key=True, index=True)
-    username = Column(String(255), unique=True, index=True, nullable=False)
+    # Which site adapter owns this model (see app/core/sites/registry.py).
+    site = Column(String(50), nullable=False, default="flirt4free", index=True)
+    username = Column(String(255), index=True, nullable=False)
     display_name = Column(String(255), nullable=True)
-    bio = Column(Text, nullable=True)
-    follower_count = Column(Integer, nullable=True)
-    room_id = Column(String(255), nullable=True)
+    # Site-side numeric id, cached so status/stream lookups skip the name resolve.
+    model_id = Column(String(64), nullable=True)
+    # Last observed room state: public, private, offline, not_found.
+    room_state = Column(String(20), nullable=True)
     is_monitoring = Column(Boolean, default=False)
+    # True only while the room is public (recordable).
     is_live = Column(Boolean, default=False)
     is_on_watchlist = Column(Boolean, default=True)
     last_checked = Column(DateTime, nullable=True)
     profile_pic_url = Column(String(512), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
     # Cascade so deleting a user removes their recordings rather than
     # violating the recordings.user_id foreign key.
     recordings = relationship(
@@ -31,7 +38,7 @@ class User(Base):
 
 class Recording(Base):
     __tablename__ = "recordings"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     filename = Column(String(512), nullable=False)
@@ -42,8 +49,6 @@ class Recording(Base):
     duration_seconds = Column(Integer, nullable=True)
     file_size = Column(BigInteger, nullable=True)
     error_message = Column(Text, nullable=True)
-    transcript_status = Column(String(50), nullable=True)  # pending, processing, done, failed
-    transcript_text = Column(Text, nullable=True)
     thumbnail_ready = Column(Boolean, default=False)
     sprite_ready = Column(Boolean, default=False)
     is_favorite = Column(Boolean, default=False)
@@ -51,9 +56,8 @@ class Recording(Base):
     # don't shell out to ffprobe per row. NULL = not yet determined.
     is_corrupt = Column(Boolean, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    
+
     user = relationship("User", back_populates="recordings")
-    live_events = relationship("LiveEvent", back_populates="recording", cascade="all, delete-orphan")
     # Clips deliberately OUTLIVE their recording: deleting a recording frees
     # the (large) source file while keeping the (small) clips the user cut
     # from it. The database nulls Clip.recording_id via ON DELETE SET NULL,
@@ -89,30 +93,3 @@ class Clip(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     recording = relationship("Recording", back_populates="clips")
-
-
-class LiveEvent(Base):
-    __tablename__ = "live_events"
-
-    id = Column(Integer, primary_key=True, index=True)
-    recording_id = Column(Integer, ForeignKey("recordings.id"), nullable=False, index=True)
-    offset_seconds = Column(Float, nullable=False)
-    event_type = Column(String(20), nullable=False)  # "chat" or "gift"
-    user_nickname = Column(String(255), nullable=False)
-    user_unique_id = Column(String(255), nullable=True)
-    content = Column(Text, nullable=True)
-    gift_name = Column(String(255), nullable=True)
-    gift_diamond_count = Column(Integer, nullable=True)
-    gift_repeat_count = Column(Integer, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    recording = relationship("Recording", back_populates="live_events")
-
-
-class Setting(Base):
-    __tablename__ = "settings"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    key = Column(String(255), unique=True, index=True, nullable=False)
-    value = Column(Text, nullable=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

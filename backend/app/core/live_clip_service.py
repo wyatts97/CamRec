@@ -4,8 +4,8 @@ Lets a user capture a clip *while* a stream is still being recorded, without
 touching the main recording. It does this by spawning a **separate** ffmpeg
 process that reads the same public live URL and writes to its own MPEG-TS file
 (truncation-safe — needs no moov atom), then remuxes that to a faststart MP4
-when the user stops the clip. The main recording's file, thread, and chat
-capture are never touched.
+when the user stops the clip. The main recording's file and thread are never
+touched.
 
 At most one live clip per recording is allowed at a time.
 """
@@ -19,19 +19,20 @@ from pathlib import Path
 from app.db.database import get_session, run_background
 from app.db.models import Recording, Clip
 from app.core.media_utils import clip_directory, generate_thumbnail, generate_sprite, thumbnail_path
-from app.core.recorder_service import recorder_service
+from app.core.site_service import site_service
 from app.core.notification_service import notification_service
 
-logger = logging.getLogger("tikrec.live_clip")
+logger = logging.getLogger("camsuite.live_clip")
 
 
 class LiveClipTask:
     """Runs one ffmpeg capture of a live stream into a .ts file."""
 
-    def __init__(self, recording_id: int, username: str, room_id: str, ts_path: Path, start_offset: int):
+    def __init__(self, recording_id: int, username: str, site: str, model_id: str, ts_path: Path, start_offset: int):
         self.recording_id = recording_id
         self.username = username
-        self.room_id = room_id
+        self.site = site
+        self.model_id = model_id
         self.ts_path = ts_path
         self.start_offset = start_offset
         self.started_wall = time.time()
@@ -46,16 +47,19 @@ class LiveClipTask:
         self._thread.start()
 
     def _run(self) -> None:
-        live_url = recorder_service.get_live_url(self.room_id, username=self.username)
-        if not live_url:
-            self.error = "Could not resolve live stream URL"
+        try:
+            live_url = site_service.get_live_url(self.model_id, self.site)
+        except Exception as exc:
+            self.error = str(exc) or "Could not resolve live stream URL"
             self._ready.set()
-            logger.warning("Live clip for recording %d: no live URL", self.recording_id)
+            logger.warning("Live clip for recording %d: no live URL (%s)", self.recording_id, exc)
             return
+        user_agent = site_service.adapter(self.site).ffmpeg_headers().get("User-Agent")
         try:
             self._proc = subprocess.Popen(
                 [
                     "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                    *(["-user_agent", user_agent] if user_agent else []),
                     "-fflags", "+igndts+genpts",
                     "-i", live_url,
                     "-c", "copy",
@@ -173,11 +177,12 @@ class LiveClipService:
                 raise ValueError("Recording not found")
             if rec.status not in ("pending", "recording"):
                 raise ValueError("Recording is not active")
-            room_id = rec.user.room_id
+            model_id = rec.user.model_id
+            site = rec.user.site
             username = rec.user.username
             started_at = rec.started_at
-            if not room_id:
-                raise ValueError("No room_id for this recording")
+            if not model_id:
+                raise ValueError("No model id known for this recording")
 
         start_offset = 0
         if started_at:
@@ -187,7 +192,7 @@ class LiveClipService:
         ts_path = clip_directory() / f"{stem}.ts"
         ts_path.parent.mkdir(parents=True, exist_ok=True)
 
-        task = LiveClipTask(recording_id, username, room_id, ts_path, start_offset)
+        task = LiveClipTask(recording_id, username, site, model_id, ts_path, start_offset)
         task.start()
         task.wait_ready(timeout=8)
         if task.error:
@@ -195,7 +200,7 @@ class LiveClipService:
 
         with self._lock:
             self._tasks[recording_id] = task
-        logger.info("Started live clip for recording %d (@%s)", recording_id, username)
+        logger.info("Started live clip for recording %d (%s)", recording_id, username)
         return {"active": True, "elapsed": 0}
 
     def stop(self, recording_id: int) -> dict:
@@ -228,7 +233,7 @@ class LiveClipService:
                 recording_id=recording_id,
                 # Stored on the clip so it survives deletion of the recording.
                 username=task.username,
-                title=f"Live clip — @{task.username}",
+                title=f"Live clip — {task.username}",
                 filename=mp4_path.name,
                 start_time=task.start_offset,
                 end_time=end_offset,
@@ -246,7 +251,7 @@ class LiveClipService:
         try:
             notification_service.publish(
                 type="clip_ready",
-                title=f"Live clip saved: @{task.username}",
+                title=f"Live clip saved: {task.username}",
                 message=f"A {duration}s clip was captured from the live stream.",
                 data={"clip_id": clip_id, "recording_id": recording_id, "username": task.username},
             )

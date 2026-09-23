@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import time
 import threading
@@ -15,18 +16,17 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.config import settings
 from app.db.database import get_db, get_session, run_background
-from app.db.models import Recording, User, LiveEvent
+from app.db.models import Recording, User
 from app.schemas.recording import (
     RecordingStart,
     RecordingResponse,
     RecordingListResponse,
     ActiveRecordingResponse
 )
-from app.schemas.live_event import LiveEventResponse, LiveEventListResponse
-from app.core.recorder_service import recorder_service
+from app.schemas.user import USERNAME_PATTERN
+from app.core.site_service import site_service
 from app.core.task_manager import task_manager
 from app.core.live_clip_service import live_clip_service
-from app.core.live_chat_service import live_chat_service
 from app.core.media_utils import (
     generate_recording_filename,
     generate_sprite,
@@ -43,10 +43,9 @@ from app.core.media_utils import (
     sprite_vtt_version,
     SPRITE_VERSION,
 )
-from app.core.transcription_service import transcription_service
 from app.core.settings_store import settings_store
 
-logger = logging.getLogger("tikrec.recordings")
+logger = logging.getLogger("camsuite.recordings")
 
 
 router = APIRouter(prefix="/recordings", tags=["recordings"])
@@ -178,12 +177,7 @@ def _is_sprite_ready(recording: Recording, db: Session | None = None) -> bool:
     return False
 
 
-def _build_response(
-    rec: Recording, db: Session | None = None, include_transcript: bool = True
-) -> RecordingResponse:
-    # List endpoints pass include_transcript=False: a full Whisper transcript
-    # is ~75 KB per hour of stream, which made a 12-row page ~900 KB while the
-    # list UIs only read transcript_status.
+def _build_response(rec: Recording, db: Session | None = None) -> RecordingResponse:
     # Corruption state is cached on the row (set at finalize/repair time) so
     # list endpoints never shell out to ffprobe. Legacy rows have a NULL flag;
     # probe those once lazily and backfill so it's fast on subsequent loads.
@@ -217,8 +211,6 @@ def _build_response(
         created_at=rec.created_at,
         thumbnail_ready=_is_thumbnail_ready(rec, db),
         sprite_ready=_is_sprite_ready(rec, db),
-        transcript_status=rec.transcript_status,
-        transcript_text=rec.transcript_text if include_transcript else None,
         is_favorite=rec.is_favorite or False,
         is_corrupt=is_corrupt,
     )
@@ -302,7 +294,7 @@ def list_recordings(
     recordings = query.order_by(*order).offset((page - 1) * page_size).limit(page_size).all()
 
     return RecordingListResponse(
-        recordings=[_build_response(rec, include_transcript=False) for rec in recordings],
+        recordings=[_build_response(rec) for rec in recordings],
         total=total,
         page=page,
         page_size=page_size
@@ -311,57 +303,54 @@ def list_recordings(
 
 @router.post("/start", response_model=RecordingResponse, status_code=status.HTTP_201_CREATED)
 def start_recording(request: RecordingStart, db: Session = Depends(get_db)):
-    if not request.username and not request.url and not request.room_id:
+    site = request.site
+    if request.user_id:
+        user = db.query(User).filter(User.id == request.user_id).first()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model not found")
+        username, site = user.username, user.site
+    elif request.username:
+        try:
+            username = site_service.normalize_username(request.username, site)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        if not re.match(USERNAME_PATTERN, username):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid model name")
+        user = db.query(User).filter(User.site == site, User.username == username).first()
+    else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Must provide username, url, or room_id"
+            detail="Provide a model name, profile URL or user_id"
         )
-    
-    username = request.username
-    room_id = request.room_id
-    
-    if request.url:
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="URL parsing not yet implemented. Please use username instead."
-        )
-    
-    if username:
-        username = username.lstrip("@").strip()
-        status_info = recorder_service.check_user_live(username)
-        
-        if status_info.get("error"):
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=status_info["error"]
-            )
-        
-        if not status_info.get("is_live"):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"User @{username} is not currently live"
-            )
-        
-        room_id = status_info.get("room_id")
-    
-    if not room_id:
+
+    st = site_service.check_status(username, site, user.model_id if user else None)
+    if st.state == "not_found":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"No model named '{username}' was found")
+    if st.error and not st.is_online:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=st.error)
+    if st.state == "private":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Could not determine room_id"
+            detail=f"{username} is in a private show — only public shows can be recorded",
         )
-    
-    user = db.query(User).filter(User.username == username).first()
+    if not st.is_public or not st.model_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{username} is not currently live")
+    model_id = st.model_id
+
     if not user:
-        user = User(
-            username=username,
-            room_id=room_id,
-            is_live=True,
-            last_checked=datetime.utcnow()
-        )
+        # Recording someone who isn't on the watchlist yet: keep a hidden row
+        # so the recording has an owner.
+        user = User(site=site, username=username, is_on_watchlist=False)
         db.add(user)
-        db.commit()
-        db.refresh(user)
-    
+    user.model_id = model_id
+    user.room_state = st.state
+    user.is_live = True
+    user.last_checked = datetime.utcnow()
+    if st.display_name and not user.display_name:
+        user.display_name = st.display_name
+    db.commit()
+    db.refresh(user)
+
     # Hold a claim across the duplicate check and the insert so this cannot
     # race the monitor loop, which may be mid-cycle deciding to auto-record
     # the same user.  See TaskManager.claim_user.
@@ -369,7 +358,7 @@ def start_recording(request: RecordingStart, db: Session = Depends(get_db)):
         if not claimed:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"A recording for @{username} is already being started",
+                detail=f"A recording for {username} is already being started",
             )
 
         existing = (
@@ -383,10 +372,10 @@ def start_recording(request: RecordingStart, db: Session = Depends(get_db)):
         if existing is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"@{username} is already being recorded",
+                detail=f"{username} is already being recorded",
             )
 
-        filename = generate_recording_filename(username)
+        filename = generate_recording_filename(username, site_service.adapter(site).file_prefix)
 
         recording = Recording(
             user_id=user.id,
@@ -398,15 +387,15 @@ def start_recording(request: RecordingStart, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(recording)
 
-    cookies = recorder_service.load_cookies()
-    
+    max_seconds = max(
+        60, int(settings_store.get("max_recording_hours", settings.DEFAULT_MAX_RECORDING_HOURS)) * 3600
+    )
     success = task_manager.start_recording(
         recording_id=recording.id,
         username=username,
-        room_id=room_id,
-        duration=request.duration,
-        bitrate=request.bitrate or settings_store.get("default_bitrate", settings.DEFAULT_BITRATE),
-        cookies=cookies,
+        model_id=model_id,
+        site=site,
+        duration=request.duration or max_seconds,
         proxy=settings_store.get("proxy", settings.DEFAULT_PROXY)
     )
     
@@ -465,7 +454,6 @@ def get_active_recordings(db: Session = Depends(get_db)):
         duration = None
         if rec.started_at:
             duration = int((now - rec.started_at).total_seconds())
-        chat_connected, chat_error = live_chat_service.get_status(rec.id)
         out.append(ActiveRecordingResponse(
             id=rec.id,
             user_id=rec.user_id,
@@ -473,53 +461,31 @@ def get_active_recordings(db: Session = Depends(get_db)):
             status=rec.status,
             started_at=rec.started_at,
             duration_seconds=duration,
-            room_id=rec.user.room_id,
-            chat_connected=chat_connected,
-            chat_error=None if chat_connected else chat_error,
+            site=rec.user.site,
+            model_id=rec.user.model_id,
         ))
 
     return out
 
 
-def _live_url_type(url: str) -> str:
-    """Return the player type for a given live URL."""
-    lower = url.lower()
-    if lower.endswith(".m3u8") or "/playlist" in lower or "/master" in lower:
-        return "hls"
-    if lower.endswith(".flv") or "/flv" in lower:
-        return "flv"
-    if lower.startswith("rtmp://") or lower.startswith("rtmps://"):
-        return "rtmp"
-    # Some TikTok URLs contain the container type in query parameters
-    if "flv" in lower:
-        return "flv"
-    if "hls" in lower or "m3u8" in lower:
-        return "hls"
-    return "flv"
-
-
 @router.get("/{recording_id}/live-url")
 def get_recording_live_url(recording_id: int, db: Session = Depends(get_db)):
-    """Fetch a fresh live-stream URL for an active recording.
-
-    TikTok live URLs expire after ~5 minutes, so this endpoint re-resolves
-    the URL on every request rather than caching it.
-    """
+    """Fetch a fresh HLS master playlist URL for watching an active recording in the browser."""
     recording = db.query(Recording).filter(Recording.id == recording_id).first()
     if not recording or recording.status not in ("pending", "recording"):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Recording not active"
         )
-    room_id = recording.user.room_id
-    if not room_id:
+    model_id = recording.user.model_id
+    if not model_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No room_id for this recording"
+            detail="No model id known for this recording"
         )
 
     try:
-        live_url = recorder_service.get_live_url(room_id, username=recording.user.username)
+        live_url = site_service.get_playback_url(model_id, recording.user.site)
     except RuntimeError as e:
         logger.warning("Live URL resolution failed for recording %d: %s", recording_id, e)
         raise HTTPException(
@@ -533,7 +499,7 @@ def get_recording_live_url(recording_id: int, db: Session = Depends(get_db)):
             detail=f"Could not resolve live stream URL: {e}"
         )
 
-    return {"live_url": live_url, "type": _live_url_type(live_url)}
+    return {"live_url": live_url, "type": "hls"}
 
 
 @router.get("/{recording_id}/live-clip/status")
@@ -562,17 +528,6 @@ def live_clip_stop(recording_id: int):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-
-
-# NOTE: literal paths must be declared before the /{recording_id} catch-all.
-# FastAPI matches in declaration order, so a literal registered after it is
-# never reached (the segment binds to recording_id and fails int parsing).
-@router.get("/transcripts/search")
-def search_transcripts(q: str, db: Session = Depends(get_db)):
-    """Search recordings by transcript text."""
-    if not q or len(q.strip()) < 2:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Query too short")
-    return transcription_service.search(q.strip(), db)
 
 
 @router.get("/{recording_id}", response_model=RecordingResponse)
@@ -907,28 +862,6 @@ def get_sprite_vtt(recording_id: int, request: Request, db: Session = Depends(ge
     return Response(content=content, media_type="text/vtt", headers=headers)
 
 
-@router.post("/{recording_id}/transcribe", response_model=RecordingResponse)
-def start_transcription(recording_id: int, db: Session = Depends(get_db)):
-    """Queue a transcription job for a completed or stopped recording."""
-    recording = db.query(Recording).filter(Recording.id == recording_id).first()
-    if not recording:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recording not found")
-    if recording.status not in ("completed", "stopped"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only completed or stopped recordings can be transcribed"
-        )
-    if recording.transcript_status == "processing":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Transcription already in progress")
-
-    recording.transcript_status = "pending"
-    db.commit()
-    db.refresh(recording)
-
-    transcription_service.enqueue(recording_id)
-    return _build_response(recording, db)
-
-
 @router.post("/sprites/regenerate")
 def regenerate_missing_sprites(db: Session = Depends(get_db)):
     """Trigger sprite generation for all completed/stopped recordings missing sprites."""
@@ -982,7 +915,7 @@ def repair_recording(recording_id: int, db: Session = Depends(get_db)):
     """Attempt to repair a corrupted recording.
 
     Runs error-tolerant ffmpeg commands (stream-copy first, full re-encode
-    as fallback) to recover playback from recordings damaged by TikTok's
+    as fallback) to recover playback from recordings damaged by the stream's
     mid-stream codec/resolution switches.
 
     The repaired file **replaces** the original in-place. On success the
@@ -1081,74 +1014,3 @@ def repair_recording(recording_id: int, db: Session = Depends(get_db)):
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         detail="Repair failed — recording may be beyond recovery",
     )
-
-
-@router.get("/{recording_id}/events", response_model=LiveEventListResponse)
-def list_live_events(
-    recording_id: int,
-    page: int = 1,
-    page_size: int = 100,
-    event_type: str | None = None,
-    search: str | None = None,
-    after_id: int | None = None,
-    db: Session = Depends(get_db),
-):
-    """Return live chat/gift events for a recording.
-
-    Pass ``after_id`` to fetch only events newer than one already held.  The
-    chat panel polls every few seconds while a stream is live; without a
-    cursor it re-downloaded the full window every time, which dominated
-    bandwidth on a busy stream.
-    """
-    page = max(1, page)
-    page_size = max(1, min(page_size, settings.MAX_PAGE_SIZE))
-    recording = db.query(Recording).filter(Recording.id == recording_id).first()
-    if not recording:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recording not found")
-
-    query = db.query(LiveEvent).filter(LiveEvent.recording_id == recording_id)
-    count_query = db.query(func.count()).select_from(LiveEvent).filter(LiveEvent.recording_id == recording_id)
-
-    if event_type:
-        query = query.filter(LiveEvent.event_type == event_type)
-        count_query = count_query.filter(LiveEvent.event_type == event_type)
-
-    if search:
-        like_pat = f"%{search}%"
-        query = query.filter(
-            LiveEvent.user_nickname.ilike(like_pat)
-            | LiveEvent.content.ilike(like_pat)
-            | LiveEvent.gift_name.ilike(like_pat)
-        )
-        count_query = count_query.filter(
-            LiveEvent.user_nickname.ilike(like_pat)
-            | LiveEvent.content.ilike(like_pat)
-            | LiveEvent.gift_name.ilike(like_pat)
-        )
-
-    total = count_query.scalar() or 0
-
-    if after_id is not None:
-        # Incremental fetch: ids are monotonic in insert order, so this is the
-        # natural "what arrived since" cursor. Ordered by id (not offset) so
-        # the client can append and track the high-water mark.
-        events = (
-            query.filter(LiveEvent.id > after_id)
-            .order_by(LiveEvent.id.asc())
-            .limit(page_size)
-            .all()
-        )
-    else:
-        events = (
-            query.order_by(LiveEvent.offset_seconds.asc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
-            .all()
-        )
-
-    return LiveEventListResponse(
-        events=[LiveEventResponse.model_validate(e) for e in events],
-        total=total,
-    )
-
-

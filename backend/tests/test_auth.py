@@ -50,7 +50,7 @@ def test_login_with_wrong_password_is_rejected(client):
 def test_login_then_access(client):
     r = client.post("/api/auth/login", json={"password": "correct-horse"})
     assert r.status_code == 200, r.text
-    assert "tikrec_session" in r.cookies
+    assert "camsuite_session" in r.cookies
     assert client.get("/api/secret").status_code == 200
 
 
@@ -72,7 +72,7 @@ def test_status_probe_is_unauthenticated(client):
 def test_forged_token_is_rejected(client):
     import time
     forged = f"{int(time.time()) + 9999}:nonce:{'0' * 64}"
-    client.cookies.set("tikrec_session", forged)
+    client.cookies.set("camsuite_session", forged)
     assert client.get("/api/secret").status_code == 401
 
 
@@ -82,7 +82,7 @@ def test_expired_token_is_rejected(client):
     state = auth_mod.auth_state()
     payload = f"{int(time.time()) - 10}:nonce"
     sig = hmac.new(state._secret, payload.encode(), hashlib.sha256).hexdigest()
-    client.cookies.set("tikrec_session", f"{payload}:{sig}")
+    client.cookies.set("camsuite_session", f"{payload}:{sig}")
     assert client.get("/api/secret").status_code == 401
 
 

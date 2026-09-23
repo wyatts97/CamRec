@@ -17,8 +17,6 @@ from app.core.media_utils import (
     thumbnail_path,
     recording_path,
 )
-from app.core.transcription_service import transcription_service
-from app.core.export_service import export_service
 from app.core.auth import require_auth
 from app.api.routes import (
     auth as auth_routes,
@@ -26,10 +24,8 @@ from app.api.routes import (
     recordings,
     clips,
     settings as settings_routes,
-    stats as stats_routes,
+    storage as storage_routes,
     notifications as notifications_routes,
-    search as search_routes,
-    exports as export_routes,
 )
 from app.core.task_manager import task_manager, monitor_service
 
@@ -52,8 +48,7 @@ def _quiet_noisy_loggers() -> None:
     access = logging.getLogger("uvicorn.access")
     if not any(isinstance(f, _HealthCheckFilter) for f in access.filters):
         access.addFilter(_HealthCheckFilter())
-    # httpx logs every request at INFO with the full URL, including TikTok's
-    # device_id/room_id query strings on each chat retry.
+    # httpx logs every request at INFO with the full URL.
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
@@ -111,12 +106,9 @@ def _recover_orphaned_recording(recording_id: int, filename: str) -> None:
                 rec.file_size = video_path.stat().st_size
                 rec.duration_seconds = int(round(actual_duration)) if actual_duration else rec.duration_seconds
                 rec.error_message = None
-                if rec.transcript_status is None:
-                    rec.transcript_status = "pending"
                 db.commit()
         run_background(generate_thumbnail, video_path, thumbnail_path(video_path), recording_id)
         run_background(generate_sprite, video_path)
-        transcription_service.enqueue(recording_id)
         logger.info("Orphan recording %d recovered successfully", recording_id)
     else:
         with get_session() as db:
@@ -161,21 +153,18 @@ async def lifespan(app: FastAPI):
                 rec.error_message = rec.error_message or "Recording orphaned after app restart"
                 db.commit()
                 logger.warning(
-                    "Reconciled orphaned recording %d for @%s (%s)",
+                    "Reconciled orphaned recording %d for %s (%s)",
                     rec.id, rec.user.username, rec.filename,
                 )
 
     yield
     monitor_service.stop()
     task_manager.shutdown()
-    transcription_service.shutdown()
-    # Delete any archives still sitting in temp.
-    export_service.shutdown()
 
 
 app = FastAPI(
     title=settings.APP_NAME,
-    description="WebUI for TikTok Live Recorder",
+    description="Live cam recorder",
     version="1.0.0",
     lifespan=lifespan,
     # The docs enumerate every endpoint; keep them off on an internet-facing
@@ -211,10 +200,8 @@ for _router in (
     recordings.router,
     clips.router,
     settings_routes.router,
-    stats_routes.router,
+    storage_routes.router,
     notifications_routes.router,
-    search_routes.router,
-    export_routes.router,
 ):
     app.include_router(_router, prefix="/api", dependencies=[_protected])
 
@@ -227,7 +214,7 @@ async def health():
 @app.get("/")
 def root():
     return {
-        "message": "TikRec WebUI API",
+        "message": "CamSuite API",
         "docs": "/docs",
         "health": "/api/health"
     }

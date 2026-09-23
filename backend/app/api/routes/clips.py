@@ -34,7 +34,7 @@ from app.core.media_utils import (
     SPRITE_VERSION,
 )
 
-logger = logging.getLogger("tikrec.clips")
+logger = logging.getLogger("camsuite.clips")
 
 router = APIRouter(prefix="/clips", tags=["clips"])
 

@@ -1,16 +1,14 @@
 from datetime import datetime
 from pydantic import BaseModel, Field
 
-from app.schemas.user import USERNAME_PATTERN
-
 
 class RecordingStart(BaseModel):
-    username: str | None = Field(default=None, max_length=24, pattern=USERNAME_PATTERN)
-    url: str | None = None
-    room_id: str | None = None
+    # A model name or profile URL; normalized by the site adapter.
+    username: str | None = Field(default=None, max_length=300)
+    user_id: int | None = None
+    site: str = "flirt4free"
     mode: str = Field(default="manual", pattern="^(manual|automatic)$")
     duration: int | None = Field(default=None, ge=1)
-    bitrate: str | None = None
 
 
 class RecordingResponse(BaseModel):
@@ -28,8 +26,6 @@ class RecordingResponse(BaseModel):
     created_at: datetime
     thumbnail_ready: bool = False
     sprite_ready: bool = False
-    transcript_status: str | None = None
-    transcript_text: str | None = None
     is_favorite: bool = False
     is_corrupt: bool | None = None
 
@@ -85,8 +81,5 @@ class ActiveRecordingResponse(BaseModel):
     status: str
     started_at: datetime | None = None
     duration_seconds: int | None = None
-    room_id: str | None = None
-    # Live chat capture state, so the UI can say "chat not captured" instead
-    # of showing an empty timeline.
-    chat_connected: bool = False
-    chat_error: str | None = None
+    site: str = "flirt4free"
+    model_id: str | None = None

@@ -15,6 +15,7 @@ data/telegram.json
 data/settings.json
 data/backups/
 .env
+TikRecGUI
 
 # Python
 __pycache__/

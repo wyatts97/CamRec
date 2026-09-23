@@ -1,4 +1,3 @@
-import json
 import shutil
 from urllib.parse import urlparse
 
@@ -7,17 +6,16 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.config import settings
 from app.schemas.settings import (
-    CookiesConfig,
     NotificationSinksConfig,
     NtfyConfig,
     DiscordConfig,
     TelegramBotConfig,
-    TelegramConfig,
     AutoCleanupConfig,
     SettingsResponse,
     SettingsUpdate
 )
-from app.core.recorder_service import recorder_service
+from app.core.site_service import site_service
+from app.core.sites import available_sites
 from app.core.settings_store import settings_store
 from app.core.cleanup_service import cleanup_service
 from app.core.task_manager import monitor_service
@@ -26,21 +24,6 @@ from app.core.notification_sinks import notification_sinks
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
-
-def _read_json_file(path, default: dict) -> dict:
-    if path.exists():
-        try:
-            with open(path, "r") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            pass
-    return default
-
-
-def _write_json_file(path, data: dict):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
 
 
 # Secrets are shown to the client only as a short masked preview.  Any value
@@ -116,16 +99,6 @@ def _sink_response() -> NotificationSinksConfig:
 
 @router.get("", response_model=SettingsResponse)
 def get_settings():
-    cookies_data = _read_json_file(
-        settings.COOKIES_FILE,
-        {"sessionid_ss": "", "tt-target-idc": "useast2a"}
-    )
-    
-    telegram_data = _read_json_file(
-        settings.TELEGRAM_CONFIG_FILE,
-        {"api_id": "", "api_hash": "", "chat_id": "me"}
-    )
-    
     auto_cleanup_data = settings_store.get("auto_cleanup", {
         "enabled": False,
         "days": 7,
@@ -133,23 +106,11 @@ def get_settings():
     })
     
     return SettingsResponse(
-        cookies=CookiesConfig(
-            sessionid_ss=_mask_secret(cookies_data.get("sessionid_ss", "")),
-            tt_target_idc=cookies_data.get("tt-target-idc", "useast2a"),
-            sessionid_ss_set=bool(cookies_data.get("sessionid_ss")),
-        ),
-        telegram=TelegramConfig(
-            api_id=telegram_data.get("api_id", ""),
-            api_hash=_mask_secret(telegram_data.get("api_hash", "")),
-            chat_id=telegram_data.get("chat_id", "me"),
-            api_hash_set=bool(telegram_data.get("api_hash")),
-        ),
         proxy=settings_store.get("proxy", settings.DEFAULT_PROXY),
         output_dir=str(settings.RECORDINGS_DIR),
-        default_bitrate=settings_store.get("default_bitrate", settings.DEFAULT_BITRATE),
         automatic_interval=settings_store.get("automatic_interval", settings.DEFAULT_AUTOMATIC_INTERVAL),
         max_recording_hours=settings_store.get("max_recording_hours", settings.DEFAULT_MAX_RECORDING_HOURS),
-        chat_authenticated=bool(settings_store.get("chat_authenticated", False)),
+        preferred_quality=str(settings_store.get("preferred_quality", settings.DEFAULT_PREFERRED_QUALITY)),
         auto_cleanup=AutoCleanupConfig(**auto_cleanup_data),
         notification_sinks=_sink_response(),
         available_notification_events=sinks_module.ALL_EVENTS,
@@ -159,36 +120,12 @@ def get_settings():
 
 @router.put("", response_model=SettingsResponse)
 def update_settings(update: SettingsUpdate):
-    if update.cookies:
-        existing = _read_json_file(settings.COOKIES_FILE, {})
-        cookies_data = {
-            "sessionid_ss": _resolve_secret(
-                update.cookies.sessionid_ss, existing.get("sessionid_ss", "")
-            ),
-            "tt-target-idc": update.cookies.tt_target_idc,
-        }
-        _write_json_file(settings.COOKIES_FILE, cookies_data)
-        recorder_service.reload_cookies()
-
-    if update.telegram:
-        existing = _read_json_file(settings.TELEGRAM_CONFIG_FILE, {})
-        telegram_data = {
-            "api_id": update.telegram.api_id,
-            "api_hash": _resolve_secret(
-                update.telegram.api_hash, existing.get("api_hash", "")
-            ),
-            "chat_id": update.telegram.chat_id,
-        }
-        _write_json_file(settings.TELEGRAM_CONFIG_FILE, telegram_data)
-
     if update.proxy is not None:
         proxy = _validate_proxy(update.proxy)
         settings_store.set("proxy", proxy)
-        recorder_service.set_proxy(proxy)
 
-    if update.default_bitrate is not None:
-        bitrate = update.default_bitrate.strip() or None
-        settings_store.set("default_bitrate", bitrate)
+    if update.preferred_quality is not None:
+        settings_store.set("preferred_quality", update.preferred_quality)
 
     if update.automatic_interval is not None:
         interval = max(1, int(update.automatic_interval))
@@ -198,8 +135,6 @@ def update_settings(update: SettingsUpdate):
         max_hours = max(1, int(update.max_recording_hours))
         settings_store.set("max_recording_hours", max_hours)
 
-    if update.chat_authenticated is not None:
-        settings_store.set("chat_authenticated", bool(update.chat_authenticated))
 
     if update.auto_cleanup is not None:
         settings_store.set("auto_cleanup", {
@@ -256,15 +191,15 @@ def test_notification_sink(sink: str):
 
 @router.get("/health")
 def health_check():
-    # Deliberately sync: this handler makes a blocking HTTP call to TikTok
-    # (is_country_blacklisted) and a blocking psutil sample. As `async def`
-    # those ran on the event loop and stalled *every* other request for the
-    # duration. A plain `def` lets Starlette run it in the threadpool.
-    cookies_data = _read_json_file(settings.COOKIES_FILE, {})
-    has_cookies = bool(cookies_data.get("sessionid_ss"))
-
-    recorder_ready = recorder_service.is_available()
-    is_blacklisted = recorder_service.is_country_blacklisted() if recorder_ready else False
+    # Deliberately sync: this handler makes blocking HTTP calls to each site
+    # and a blocking psutil sample. As `async def` those ran on the event loop
+    # and stalled *every* other request. A plain `def` runs in the threadpool.
+    sites = []
+    for s in available_sites():
+        probe = site_service.adapter(s["name"]).reachability()
+        sites.append({**s, **probe})
+    site_blocked = any(s["blocked"] for s in sites)
+    site_reachable = all(s["reachable"] for s in sites)
 
     # Disk usage of the filesystem hosting the recordings directory
     disk_target = settings.RECORDINGS_DIR if settings.RECORDINGS_DIR.exists() else settings.RECORDINGS_DIR.parent
@@ -290,9 +225,10 @@ def health_check():
 
     return {
         "status": "healthy",
-        "recorder_available": recorder_ready,
-        "country_blacklisted": is_blacklisted,
-        "cookies_configured": has_cookies,
+        "sites": sites,
+        "site_reachable": site_reachable,
+        "site_blocked": site_blocked,
+        "monitor_error": monitor_service.last_error,
         "recordings_dir": str(settings.RECORDINGS_DIR),
         "recordings_dir_exists": settings.RECORDINGS_DIR.exists(),
         "disk_usage": disk_usage,

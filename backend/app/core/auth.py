@@ -30,7 +30,7 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-SESSION_COOKIE = "tikrec_session"
+SESSION_COOKIE = "camsuite_session"
 SESSION_TTL_SECONDS = 30 * 24 * 3600  # 30 days
 
 # scrypt parameters — deliberately costly, this runs once per login.
